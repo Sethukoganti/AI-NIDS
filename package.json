@@ -1,0 +1,20 @@
+{
+  "name": "ai-nids",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-NIDS - AI-Powered Network Intrusion Detection System (Random Forest + FastAPI + React). Run everything with: npm run dev",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "setup": "node scripts/setup.mjs",
+    "postinstall": "node scripts/setup.mjs",
+    "train": "node scripts/train.mjs",
+    "test": "node scripts/test.mjs",
+    "build": "npm --prefix frontend run build",
+    "reset": "node scripts/reset.mjs"
+  },
+  "keywords": ["intrusion-detection", "random-forest", "cicids2017", "fastapi", "react", "shap"],
+  "license": "MIT"
+}

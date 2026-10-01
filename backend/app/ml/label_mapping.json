@@ -1,0 +1,48 @@
+{
+  "class_index": {
+    "Bot": 0,
+    "Brute Force": 1,
+    "DDoS": 2,
+    "DoS": 3,
+    "Heartbleed": 4,
+    "Infiltration": 5,
+    "Normal Traffic": 6,
+    "Port Scanning": 7,
+    "Web Attack": 8
+  },
+  "index_to_class": {
+    "0": "Bot",
+    "1": "Brute Force",
+    "2": "DDoS",
+    "3": "DoS",
+    "4": "Heartbleed",
+    "5": "Infiltration",
+    "6": "Normal Traffic",
+    "7": "Port Scanning",
+    "8": "Web Attack"
+  },
+  "normal_class": "Normal Traffic",
+  "detailed_label_to_category": {
+    "BENIGN": "Normal Traffic",
+    "PortScan": "Port Scanning",
+    "DDoS": "DDoS",
+    "DoS Hulk": "DoS",
+    "DoS GoldenEye": "DoS",
+    "DoS slowloris": "DoS",
+    "DoS Slowhttptest": "DoS",
+    "FTP-Patator": "Brute Force",
+    "SSH-Patator": "Brute Force",
+    "Bot": "Bot",
+    "Web Attack \ufffd Brute Force": "Web Attack",
+    "Web Attack \ufffd XSS": "Web Attack",
+    "Web Attack \ufffd Sql Injection": "Web Attack",
+    "Web Attack \u2013 Brute Force": "Web Attack",
+    "Web Attack \u2013 XSS": "Web Attack",
+    "Web Attack \u2013 Sql Injection": "Web Attack",
+    "Web Attack - Brute Force": "Web Attack",
+    "Web Attack - XSS": "Web Attack",
+    "Web Attack - Sql Injection": "Web Attack",
+    "Infiltration": "Infiltration",
+    "Heartbleed": "Heartbleed"
+  }
+}

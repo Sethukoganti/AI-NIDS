@@ -1,0 +1,33 @@
+# Keep the build context small and free of secrets.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/uploads
+uploads
+data/raw
+logs
+*.log
+docs
+screenshots
+
+# model artifacts ARE required by the backend image (ml/artifacts is copied).
+# Raw CICIDS2017 parquet/CSV downloads are not.
+data/processed/*.csv
