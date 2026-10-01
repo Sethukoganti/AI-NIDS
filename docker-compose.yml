@@ -1,0 +1,127 @@
+# ============================================================================
+# AI-NIDS - full stack (frontend + backend + PostgreSQL).
+#
+#   cp .env.example .env          # then edit JWT_SECRET / AI_* if you want
+#   docker compose up --build     # http://localhost:5173  (API on :8000)
+#
+# The backend image ships the trained Random Forest artifacts from ./ml/artifacts
+# and loads them at runtime - no training happens inside the containers.
+# Redis is optional and only needed if you enable the caching profile:
+#   docker compose --profile cache up -d
+# ============================================================================
+name: ai-nids
+
+services:
+  # ---------------------------------------------------------------- database --
+  postgres:
+    image: postgres:16-alpine
+    container_name: ainids-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ainids}
+      POSTGRES_USER: ${POSTGRES_USER:-ainids}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ainids}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Exposed only so you can inspect the DB with psql/TablePlus locally.
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ainids} -d ${POSTGRES_DB:-ainids}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [ainids]
+
+  # ------------------------------------------------- optional cache (unused) --
+  redis:
+    image: redis:7-alpine
+    container_name: ainids-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    profiles: ["cache"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [ainids]
+
+  # ---------------------------------------------------------------- backend ---
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ainids-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # PostgreSQL (SQLAlchemy + psycopg2)
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ainids}:${POSTGRES_PASSWORD:-ainids}@postgres:5432/${POSTGRES_DB:-ainids}
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "10"
+
+      # ⚠  Required. Compose reads it from ./.env (or your shell). Generate with:
+      #    python -c "import secrets;print(secrets.token_urlsafe(48))"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - put it in .env before running docker compose}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+
+      # ML artifacts are baked into the image at /app/ml/artifacts
+      MODEL_PATH: /app/ml/artifacts/random_forest_model.joblib
+
+      # CORS: the nginx-served SPA is same-origin, so only dev origins are listed.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-26214400}
+      STORE_PREDICTIONS_LIMIT: ${STORE_PREDICTIONS_LIMIT:-50000}
+      JOB_WORKERS: ${JOB_WORKERS:-2}
+      RATE_LIMIT_ENABLED: "true"
+
+      # Optional AI explanation layer (server-side only; key never reaches the browser)
+      AI_PROVIDER: ${AI_PROVIDER:-none}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+
+      # Seed the demo analyst/admin accounts + bootstrap analysis on first boot
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-analyst@ainids.dev}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-Analyst@123}
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@ainids.dev}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin@1234}
+    volumes:
+      # Uploaded CSVs survive container rebuilds.
+      - uploads:/app/data/uploads
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks: [ainids]
+
+  # --------------------------------------------------------------- frontend ---
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: ainids-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    networks: [ainids]
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  ainids:
+    driver: bridge

@@ -1,0 +1,189 @@
+{
+  "evaluated_at": "2026-09-28T08:41:09Z",
+  "split": {
+    "train_fraction": 0.7,
+    "test_fraction": 0.3,
+    "random_state": 42
+  },
+  "n_train": 152411,
+  "n_test": 65320,
+  "accuracy": 0.9959430496019596,
+  "macro_f1": 0.981756145538863,
+  "weighted_f1": 0.9959430392379764,
+  "per_class": {
+    "Bot": {
+      "precision": 0.9720767888307156,
+      "recall": 0.9521367521367521,
+      "f1": 0.9620034542314335,
+      "support": 585
+    },
+    "Brute Force": {
+      "precision": 1.0,
+      "recall": 0.9970856102003643,
+      "f1": 0.9985406785844583,
+      "support": 2745
+    },
+    "DDoS": {
+      "precision": 1.0,
+      "recall": 0.999,
+      "f1": 0.9994997498749375,
+      "support": 9000
+    },
+    "DoS": {
+      "precision": 0.99761010583817,
+      "recall": 0.9974965862539827,
+      "f1": 0.9975533428165008,
+      "support": 8788
+    },
+    "Heartbleed": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 3
+    },
+    "Infiltration": {
+      "precision": 1.0,
+      "recall": 0.8181818181818182,
+      "f1": 0.9,
+      "support": 11
+    },
+    "Normal Traffic": {
+      "precision": 0.9972324983762108,
+      "recall": 0.9955175913396481,
+      "f1": 0.9963743069565341,
+      "support": 35472
+    },
+    "Port Scanning": {
+      "precision": 0.9846945022652137,
+      "recall": 0.9961600396383005,
+      "f1": 0.9903940886699507,
+      "support": 8073
+    },
+    "Web Attack": {
+      "precision": 0.9922118380062306,
+      "recall": 0.9906687402799378,
+      "f1": 0.9914396887159533,
+      "support": 643
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "Bot",
+      "Brute Force",
+      "DDoS",
+      "DoS",
+      "Heartbleed",
+      "Infiltration",
+      "Normal Traffic",
+      "Port Scanning",
+      "Web Attack"
+    ],
+    "matrix": [
+      [
+        557,
+        0,
+        0,
+        0,
+        0,
+        0,
+        28,
+        0,
+        0
+      ],
+      [
+        0,
+        2737,
+        0,
+        2,
+        0,
+        0,
+        6,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        8991,
+        0,
+        0,
+        0,
+        9,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        8766,
+        0,
+        0,
+        21,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        3,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        9,
+        2,
+        0,
+        0
+      ],
+      [
+        16,
+        0,
+        0,
+        15,
+        0,
+        0,
+        35313,
+        125,
+        3
+      ],
+      [
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        28,
+        8042,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        4,
+        0,
+        637
+      ]
+    ]
+  },
+  "timing": {
+    "fit_seconds": 17.11,
+    "predict_seconds": 0.29,
+    "predict_us_per_row": 4.38
+  },
+  "disclaimer": "Accuracy is measured on the held-out 30% split of the cleaned CICIDS2017 table described in model_metadata.json. It is NOT a guarantee of real-world detection performance: the dataset is a 2017 lab capture, the training table is a stratified subsample, and no live-network validation has been performed."
+}

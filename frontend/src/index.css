@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 5%;
+    --foreground: 210 40% 96%;
+    --panel: 222 40% 8%;
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 62%;
+    --border: 217 33% 17%;
+    --input: 217 33% 15%;
+    --primary: 187 92% 50%;
+    --primary-foreground: 222 47% 6%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 222 47% 6%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --ring: 187 92% 50%;
+    --radius: 0.75rem;
+  }
+
+  * { @apply border-border; }
+
+  html, body, #root { height: 100%; }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 110% -10%, rgba(34, 211, 238, 0.07), transparent 60%),
+      radial-gradient(50rem 34rem at -10% 10%, rgba(59, 130, 246, 0.06), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(217 33% 20%); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(217 33% 28%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .reveal { opacity: 1; }
+  .disclosure-body { grid-template-rows: 1fr; opacity: 1; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border/80 bg-panel/70 backdrop-blur-sm shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset];
+  }
+  .card-hover { @apply transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_12px_40px_-24px_rgba(34,211,238,0.55)]; }
+  .metric-value { @apply text-2xl font-semibold tabular-nums tracking-tight; }
+  .label-xs { @apply text-[11px] font-medium uppercase tracking-wider text-muted-foreground; }
+  .mono { @apply font-mono text-xs; }
+  .glass { @apply bg-panel/60 backdrop-blur-md border border-border/70; }
+
+  /* scroll-reveal: invisible until the observer marks it visible */
+  .reveal { opacity: 0; }
+  .reveal-visible { animation: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* collapsible sections animate their height via a 0fr → 1fr grid track */
+  .disclosure-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease;
+    opacity: 0;
+  }
+  .disclosure-body-open { grid-template-rows: 1fr; opacity: 1; }
+
+  .smooth { @apply transition-all duration-300 ease-out; }
+  .grid-line {
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+    background-size: 42px 42px;
+  }
+}

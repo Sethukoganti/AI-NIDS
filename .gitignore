@@ -1,0 +1,43 @@
+# --- secrets / local config -------------------------------------------------
+.env
+.env.local
+*.pem
+
+# --- python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- node -------------------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# --- data / runtime ---------------------------------------------------------
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/uploads/
+uploads/
+*.log
+logs/
+
+# --- ml ---------------------------------------------------------------------
+# Raw CICIDS2017 downloads are large: fetch them with `python ml/build_dataset.py --download`
+data/raw/
+/tmp_cicids/
+# Keep the trained artifacts (needed to run the app) but ignore ad-hoc experiments
+ml/experiments/
+*.ipynb_checkpoints/
+
+# --- editors / os -----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
