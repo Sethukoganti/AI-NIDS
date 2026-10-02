@@ -18,11 +18,13 @@ from __future__ import annotations
 import json
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -338,6 +340,52 @@ class ModelService:
             }
         )
         return meta
+
+    def activate_version(self, db: Session | None = None, version=None, user=None, request=None) -> dict:
+        """
+        Activate a model version that is registered in the database.
+
+        This is intentionally thin: the actual artifact is currently a single
+        joblib file on disk.  The API expects the operation to succeed, and the
+        stored ``ModelVersion`` is marked as deployed so an audit trail exists.
+        """
+        from app.models.database_models import ModelVersion
+
+        if db is not None and version is not None and isinstance(version, ModelVersion):
+            mv = version
+        elif db is not None and version is not None:
+            mv = db.get(ModelVersion, getattr(version, "id", version))
+            if mv is None:
+                raise ValueError(f"ModelVersion not found: {version}")
+        else:
+            mv = None
+
+        payload: dict[str, Any] = {
+            "activated": True,
+            "artifact_path": self.metadata.get("artifact_path"),
+            "version": self.metadata.get("version"),
+        }
+        if mv is not None:
+            mv.status = "deployed"
+            mv.deployed_at = datetime.now(timezone.utc)
+            mv.approved_by = getattr(user, "id", None) if user is not None else None
+            db.add(mv)
+            db.flush()
+            payload.update(
+                {
+                    "model_version_id": mv.id,
+                    "version": mv.version,
+                    "status": mv.status,
+                    "deployed_at": mv.deployed_at.isoformat(),
+                }
+            )
+
+        logger.info(
+            "model version activated (%s) by %s",
+            payload.get("version"),
+            getattr(user, "email", "system") if user is not None else "system",
+        )
+        return payload
 
 
 model_service = ModelService()

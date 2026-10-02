@@ -72,7 +72,19 @@ def assess(
     normal_class: str = "Normal Traffic",
     destination_port: float | None = None,
     severity_weight: float | None = None,
+    thresholds: dict[str, float] | None = None,
+    port_bonus: float = PORT_BONUS,
+    max_port_bonus: float = MAX_PORT_BONUS,
 ) -> RiskAssessment:
+    """
+    Score one prediction.
+
+    ``thresholds`` / ``port_bonus`` / ``max_port_bonus`` come from the admin
+    configuration (see ``config_service.RuntimeConfig``), so the boundary values
+    documented above are the *defaults* and the deployed values are whatever the
+    admin configured - they are never silently different.
+    """
+    limits = {**THRESHOLDS, **(thresholds or {})}
     confidence = max(0.0, min(float(confidence or 0.0), 1.0))
     weight = (
         severity_weight
@@ -90,25 +102,26 @@ def assess(
                 "rule": "normal traffic -> always LOW",
                 "model_confidence": round(confidence, 6),
                 "residual_uncertainty": round(1.0 - confidence, 6),
+                "thresholds": limits,
             },
         )
 
     score = weight * confidence
 
-    port_bonus = 0.0
-    if destination_port is not None and not _is_nan(destination_port):
+    applied_port_bonus = 0.0
+    if destination_port is not None and not _is_nan(destination_port) and port_bonus:
         try:
             if int(destination_port) in SENSITIVE_PORTS:
-                port_bonus = PORT_BONUS
+                applied_port_bonus = port_bonus
         except (TypeError, ValueError):
-            port_bonus = 0.0
-    score = min(score + min(port_bonus, MAX_PORT_BONUS), 1.0)
+            applied_port_bonus = 0.0
+    score = min(score + min(applied_port_bonus, max_port_bonus), 1.0)
 
-    if score >= THRESHOLDS["critical"]:
+    if score >= limits["critical"]:
         level = CRITICAL
-    elif score >= THRESHOLDS["high"]:
+    elif score >= limits["high"]:
         level = HIGH
-    elif score >= THRESHOLDS["medium"]:
+    elif score >= limits["medium"]:
         level = MEDIUM
     else:
         level = LOW
@@ -120,9 +133,9 @@ def assess(
             "rule": "attack_severity_weight * confidence (+ sensitive-port bonus)",
             "attack_severity_weight": weight,
             "model_confidence": round(confidence, 6),
-            "port_bonus": round(port_bonus, 4),
+            "port_bonus": round(applied_port_bonus, 4),
             "destination_port": None if _is_nan(destination_port) else int(destination_port),
-            "thresholds": THRESHOLDS,
+            "thresholds": limits,
         },
     )
 
@@ -138,15 +151,23 @@ def severity_is_at_least(level: str, minimum: str) -> bool:
     return LEVEL_ORDER.get(level, 0) >= LEVEL_ORDER.get(minimum, 0)
 
 
-def rules_documentation() -> dict:
-    """Exposed through /api/alerts/rules so the UI can show the real rules."""
+def rules_documentation(runtime: dict | None = None) -> dict:
+    """
+    Exposed through /api/alerts/rules so the UI can show the real rules.
+
+    ``runtime`` is the effective configuration; when omitted the code defaults are
+    reported and the payload says so explicitly.
+    """
+    thresholds = (runtime or {}).get("risk_thresholds") or THRESHOLDS
+    port_bonus = (runtime or {}).get("sensitive_port_bonus")
+    port_bonus = PORT_BONUS if port_bonus is None else port_bonus
     return {
         "formula": "risk_score = attack_severity_weight[prediction] * confidence + sensitive_port_bonus",
-        "thresholds": THRESHOLDS,
+        "thresholds": thresholds,
         "attack_severity_weight": ATTACK_SEVERITY_WEIGHT,
         "default_attack_weight": DEFAULT_ATTACK_WEIGHT,
         "sensitive_ports": sorted(SENSITIVE_PORTS),
-        "port_bonus": PORT_BONUS,
+        "port_bonus": port_bonus,
         "max_port_bonus": MAX_PORT_BONUS,
         "normal_rule": "predictions equal to the normal class are always LOW risk",
         "alert_rule": "alerts are raised for attack predictions whose risk level is MEDIUM or above",
@@ -161,4 +182,6 @@ def rules_documentation() -> dict:
             "never more than 300 pairs (the rest fold into one overflow alert per attack type), so a "
             "1000-flow port sweep becomes a handful of rows instead of 1000 notifications"
         ),
+        "configured": runtime is not None,
+        "runtime": runtime or {},
     }

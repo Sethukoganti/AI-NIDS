@@ -31,13 +31,51 @@ from app.models.database_models import (
     DetectionStatistic,
     Prediction,
 )
-from app.services import alert_service, preprocessing_service, risk_service
+from app.services import (
+    alert_service,
+    config_service,
+    investigation_service,
+    notification_service,
+    preprocessing_service,
+    risk_service,
+)
+from app.services.config_service import RuntimeConfig
 from app.services.ml_service import ModelUnavailableError, model_service
 
 logger = get_logger("ainids.predictions")
 
-_executor = ThreadPoolExecutor(max_workers=settings.JOB_WORKERS, thread_name_prefix="ainids-job")
+_executor_lock = threading.Lock()
+_executor: ThreadPoolExecutor | None = None
+_executor_workers = 0
 _progress_lock = threading.Lock()
+
+
+def _pool(workers: int) -> ThreadPoolExecutor:
+    """
+    Background job pool, resized when an admin changes ``detection.job_workers``.
+
+    Rebuilding the executor only affects jobs queued *after* the change: work
+    already running on the old pool finishes untouched.
+    """
+    global _executor, _executor_workers
+    workers = max(1, int(workers or settings.JOB_WORKERS))
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="ainids-job"
+            )
+            _executor_workers = workers
+            logger.info("analysis worker pool started with %d worker(s)", workers)
+        elif workers != _executor_workers:
+            previous, _executor_workers = _executor, workers
+            _executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ainids-job")
+            logger.info("analysis worker pool resized %d -> %d", previous._max_workers, workers)
+        return _executor
+
+
+def pool_workers() -> int:
+    return _executor_workers or settings.JOB_WORKERS
+
 
 # features persisted with every prediction so records stay inspectable later
 DISPLAY_FEATURES = [
@@ -78,9 +116,12 @@ def create_job(db: Session, dataset: Dataset, user_id: str | None) -> AnalysisJo
     return job
 
 
-def submit_job(job_id: str) -> None:
-    """Queue a background analysis job."""
-    _executor.submit(_run_job_thread, job_id)
+def submit_job(job_id: str, workers: int | None = None, runtime: RuntimeConfig | None = None) -> None:
+    """Queue a background analysis job on the configured worker pool."""
+    if workers is None:
+        runtime = runtime or config_service.get_runtime()
+        workers = runtime.job_workers
+    _pool(workers or settings.JOB_WORKERS).submit(_run_job_thread, job_id)
 
 
 def _run_job_thread(job_id: str) -> None:
@@ -94,6 +135,10 @@ def _run_job_thread(job_id: str) -> None:
             job.status, job.error, job.finished_at = "failed", "dataset no longer exists", _now()
             return
         try:
+            # Re-read the effective configuration at execution time: an admin may
+            # have changed detection sensitivity or limits between queueing and
+            # running, and the job must be analysed under the configuration that
+            # actually applied.
             run_analysis(db, job, dataset, user_id=job.created_by)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("analysis job %s failed", job_id)
@@ -122,8 +167,17 @@ def run_analysis(
     user_id: str | None = None,
     source: str = "upload",
     persist: bool = True,
+    runtime: RuntimeConfig | None = None,
 ) -> dict:
     from app.services.preprocessing_service import DatasetError, load_schema, prepare_features, read_traffic_file
+
+    runtime = runtime or config_service.runtime_snapshot(db)
+    if not runtime.model_enabled:
+        raise DatasetError(
+            "The detection model is currently disabled by an administrator configuration change.",
+            503,
+            {"scope": "model", "setting": "enabled"},
+        )
 
     job.status = "running"
     job.stage = "reading file"
@@ -136,16 +190,17 @@ def run_analysis(
     if path is None or not path.exists():
         raise DatasetError("The uploaded file could not be found on the server.", 404)
 
-    df = read_traffic_file(path, max_rows=settings.MAX_ROWS_PER_JOB)
-    truncated = len(df) >= settings.MAX_ROWS_PER_JOB
+    row_limit = runtime.max_rows_per_job
+    df = read_traffic_file(path, max_rows=row_limit)
+    truncated = len(df) >= row_limit
 
     _set_progress(db, job, 12.0, "preprocessing", len(df))
     prepared = prepare_features(df, schema, strict=True)
     warnings: list[str] = []
     if truncated:
         warnings.append(
-            f"File contained more than the {settings.MAX_ROWS_PER_JOB:,}-row per-job limit; "
-            f"only the first {settings.MAX_ROWS_PER_JOB:,} flows were analysed."
+            f"File contained more than the {row_limit:,}-row per-job limit configured by the "
+            f"administrator; only the first {row_limit:,} flows were analysed."
         )
     if prepared.diagnostics["imputed_features"]:
         warnings.append(
@@ -188,6 +243,7 @@ def run_analysis(
     store_features = [f for f in DISPLAY_FEATURES if f in index_of]
     top_factors = model_service.deviations(prepared.features.iloc[: min(len(prepared.features), 5000)], top=5)
 
+    thresholds = runtime.risk_thresholds()
     records: list[dict] = []
     risk_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     attack_counts: dict[str, int] = {}
@@ -202,6 +258,8 @@ def run_analysis(
             is_attack=is_attack,
             normal_class=normal_class,
             destination_port=dest_port,
+            thresholds=thresholds,
+            port_bonus=runtime.sensitive_port_bonus,
         )
         risk_counts[assessment.level] = risk_counts.get(assessment.level, 0) + 1
         if is_attack:
@@ -247,10 +305,13 @@ def run_analysis(
     # ---- persistence --------------------------------------------------- #
     stored = 0
     alert_count = 0
+    incidents_created = 0
     if persist:
-        limit = min(len(records), settings.STORE_PREDICTIONS_LIMIT)
+        limit = min(len(records), runtime.store_predictions_limit)
         stored_objects: list[Prediction] = []
         for record in records[:limit]:
+            if (record["confidence"] or 0.0) < runtime.min_confidence_to_store:
+                continue
             prediction = Prediction(
                 dataset_id=dataset.id,
                 job_id=job.id,
@@ -286,10 +347,22 @@ def run_analysis(
                 f"Only the first {limit:,} of {len(records):,} flow results were stored; the "
                 "summary statistics below cover every analysed row."
             )
+        if stored < len(records) and runtime.min_confidence_to_store > 0:
+            warnings.append(
+                f"{len(records) - stored:,} flow(s) below the configured minimum confidence of "
+                f"{runtime.min_confidence_to_store:.2f} were summarised but not stored."
+            )
 
         _set_progress(db, job, 88.0, "generating alerts", prepared.diagnostics["rows_usable"])
-        alerts = alert_service.create_alerts_for_job(db, job.id, dataset.id, stored_objects)
+        alerts = alert_service.create_alerts_for_job(db, job.id, dataset.id, stored_objects, runtime=runtime)
         alert_count = len(alerts)
+        if alerts:
+            notification_service.create_for_alerts(db, alerts, runtime=runtime)
+            incidents_created = investigation_service.create_incidents_for_alerts(
+                db, alerts, runtime=runtime
+            )
+    else:
+        stored = len(records)
 
     # ---- summary -------------------------------------------------------- #
     summary = _build_summary(
@@ -304,6 +377,8 @@ def run_analysis(
         stored=stored,
         alerts=alert_count,
         classes=classes,
+        runtime=runtime,
+        incidents=incidents_created,
     )
 
     if persist:
@@ -346,6 +421,8 @@ def _build_summary(
     stored: int,
     alerts: int,
     classes: list[str],
+    runtime: RuntimeConfig | None = None,
+    incidents: int = 0,
 ) -> dict:
     total = len(records)
     suspicious = total - normal_count
@@ -402,10 +479,12 @@ def _build_summary(
         "high_risk_records": risk_counts.get("high", 0) + risk_counts.get("critical", 0),
         "critical_records": risk_counts.get("critical", 0),
         "alerts_generated": alerts,
+        "incidents_created": incidents,
         "stored_predictions": stored,
         "average_confidence_by_class": by_class_avg_conf,
         "ground_truth": ground_truth_report,
         "preprocessing": diagnostics,
+        "effective_configuration": runtime.to_dict() if runtime else None,
         "model": {
             "algorithm": model_service.metadata.get("algorithm"),
             "n_estimators": model_service.metadata.get("n_estimators"),

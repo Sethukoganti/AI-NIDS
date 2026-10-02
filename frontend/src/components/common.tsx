@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { createElement, isValidElement, type ReactNode } from 'react'
 import { AlertTriangle, CheckCircle2, Info, Loader2, ShieldAlert, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -37,6 +37,7 @@ export function PageHeader({
 
 export function StatCard({
   label,
+  title,
   value,
   hint,
   icon,
@@ -44,10 +45,11 @@ export function StatCard({
   countTo,
   formatCount,
 }: {
-  label: string
+  label?: string
+  title?: string
   value?: ReactNode
   hint?: ReactNode
-  icon?: ReactNode
+  icon?: ReactNode | LucideIcon
   tone?: 'default' | 'good' | 'warn' | 'bad' | 'info'
   /** when provided, the number animates up from 0 instead of appearing at once */
   countTo?: number
@@ -62,12 +64,17 @@ export function StatCard({
   }
   const animated = useCountUp(countTo)
   const shown = countTo !== undefined ? (formatCount ? formatCount(animated) : Math.round(animated)) : value
+  const iconContent = icon
+    ? isValidElement(icon)
+      ? icon
+      : createElement(icon as LucideIcon, { className: 'h-4 w-4' })
+    : null
 
   return (
     <Card className="card-hover p-4">
       <div className="flex items-start justify-between gap-2">
-        <span className="label-xs">{label}</span>
-        {icon && <span className="text-muted-foreground/70">{icon}</span>}
+        <span className="label-xs">{label ?? title}</span>
+        {iconContent && <span className="text-muted-foreground/70">{iconContent}</span>}
       </div>
       <div className={cn('metric-value mt-2', tones[tone])}>{shown}</div>
       {hint && <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</div>}

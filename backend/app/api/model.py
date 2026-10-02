@@ -4,21 +4,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.security import get_current_user
+from app.core.rbac import P_MODEL_VIEW, require_permission
 from app.services.ml_service import ModelUnavailableError, model_service
 
 router = APIRouter(prefix="/model", tags=["model"])
 
 
 @router.get("/info", summary="Model card: algorithm, dataset, split, measured accuracy")
-def info(user=Depends(get_current_user)):
+def info(user=Depends(require_permission(P_MODEL_VIEW))):
     return model_service.info()
 
 
 @router.get("/features", summary="Feature importance from model.feature_importances_")
 def features(
     top: int = Query(20, ge=1, le=200, description="How many features to return"),
-    user=Depends(get_current_user),
+    user=Depends(require_permission(P_MODEL_VIEW)),
 ):
     try:
         return model_service.importance(top=top)
@@ -27,7 +27,7 @@ def features(
 
 
 @router.get("/evaluation", summary="Held-out evaluation: per-class report + confusion matrix")
-def evaluation(user=Depends(get_current_user)):
+def evaluation(user=Depends(require_permission(P_MODEL_VIEW))):
     if not model_service.evaluation:
         raise HTTPException(
             status_code=503,
@@ -37,7 +37,7 @@ def evaluation(user=Depends(get_current_user)):
 
 
 @router.get("/architecture", summary="Pipeline diagram data (with the real hyper-parameters)")
-def architecture(user=Depends(get_current_user)):
+def architecture(user=Depends(require_permission(P_MODEL_VIEW))):
     metadata = model_service.metadata
     evaluation = model_service.evaluation
     stats = model_service.reference_stats or {}
@@ -122,7 +122,7 @@ def architecture(user=Depends(get_current_user)):
 
 
 @router.get("/class-profiles", summary="Per-class medians of the top features (evidence for explanations)")
-def class_profiles(user=Depends(get_current_user)):
+def class_profiles(user=Depends(require_permission(P_MODEL_VIEW))):
     from app.services.ai_explanation_service import class_profiles as profiles
 
     data = profiles()

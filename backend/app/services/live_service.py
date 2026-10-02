@@ -65,8 +65,19 @@ def _load(sample: str, rows: int) -> pd.DataFrame:
     return df
 
 
-def simulate_rows(db: Session, rows: int = 50, sample: str = DEFAULT_SAMPLE, persist: bool = False, user_id: str | None = None) -> dict:
+def simulate_rows(
+    db: Session,
+    rows: int = 50,
+    sample: str = DEFAULT_SAMPLE,
+    persist: bool = False,
+    user_id: str | None = None,
+    runtime=None,
+) -> dict:
     """Run N flows through the full pipeline and return the per-flow results."""
+    from app.services import alert_service, config_service
+
+    runtime = runtime or config_service.runtime_snapshot(db)
+
     if persist:
         dataset = dataset_service.register_builtin_sample(
             db, "simulation_stream" if "simulation" in sample else "sample_traffic", user_id
@@ -75,13 +86,25 @@ def simulate_rows(db: Session, rows: int = 50, sample: str = DEFAULT_SAMPLE, per
         from app.services import prediction_service
 
         job = prediction_service.create_job(db, dataset, user_id)
-        summary = prediction_service.run_analysis(db, job, dataset, user_id=user_id, source="simulation")
+        summary = prediction_service.run_analysis(
+            db, job, dataset, user_id=user_id, source="simulation", runtime=runtime
+        )
+        db.commit()
         records = prediction_service.list_predictions(db, job_id=job.id, page=1, page_size=min(rows, 200))
-        return {"persisted": True, "job": job.to_dict(), "summary": summary, "records": records["items"]}
+        alerts = alert_service.list_alerts(db, job_id=job.id, page=1, page_size=200)
+        return {
+            "persisted": True,
+            "job": job.to_dict(),
+            "summary": summary,
+            "records": records["items"],
+            "alerts": alerts["items"],
+            "effective_configuration": runtime.to_dict(),
+        }
 
     frame = _load(sample, rows)
     schema = load_schema()
     prepared = prepare_features(frame, schema, strict=True)
+    thresholds = runtime.risk_thresholds()
     results = []
     started = time.perf_counter()
 
@@ -92,7 +115,15 @@ def simulate_rows(db: Session, rows: int = 50, sample: str = DEFAULT_SAMPLE, per
         confidence = float(prediction["confidences"][0])
         is_attack = label != model_service.normal_class
         dest_port = _value(prepared.row_meta.get("destination_port"), i)
-        assessment = risk_service.assess(label, confidence, is_attack, model_service.normal_class, dest_port)
+        assessment = risk_service.assess(
+            label,
+            confidence,
+            is_attack,
+            model_service.normal_class,
+            dest_port,
+            thresholds=thresholds,
+            port_bonus=runtime.sensitive_port_bonus,
+        )
         results.append(
             {
                 "index": i,
@@ -123,18 +154,24 @@ def simulate_rows(db: Session, rows: int = 50, sample: str = DEFAULT_SAMPLE, per
             "attack_distribution": _count(suspicious, "prediction"),
         },
         "records": results,
+        "alerts": [],
+        "effective_configuration": runtime.to_dict(),
     }
 
 
-def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE):
+def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE, runtime=None):
     """
     Generator used by the SSE endpoint: yields one event dict per flow so the
     dashboard can update live without reloading anything.
     """
+    from app.services import config_service
+
+    runtime = runtime or config_service.get_runtime()
     frame = _load(sample, rows)
     schema = load_schema()
     prepared = prepare_features(frame, schema, strict=True)
     total = len(prepared.features)
+    thresholds = runtime.risk_thresholds()
 
     yield {
         "event": "start",
@@ -147,6 +184,8 @@ def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE):
             "label": "Live Traffic Simulation (replaying held-out CICIDS2017 flows)",
             "note": "Records are replayed from the held-out dataset sample - this is not a "
                     "packet-capture feed.",
+            "detection_sensitivity": runtime.detection_sensitivity,
+            "status": runtime.status,
         },
     }
 
@@ -160,7 +199,15 @@ def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE):
         confidence = float(prediction["confidences"][0])
         is_attack = label != model_service.normal_class
         dest_port = _value(prepared.row_meta.get("destination_port"), i)
-        assessment = risk_service.assess(label, confidence, is_attack, model_service.normal_class, dest_port)
+        assessment = risk_service.assess(
+            label,
+            confidence,
+            is_attack,
+            model_service.normal_class,
+            dest_port,
+            thresholds=thresholds,
+            port_bonus=runtime.sensitive_port_bonus,
+        )
 
         cumulative["total"] += 1
         cumulative["suspicious" if is_attack else "low"] += 0 if is_attack else 0

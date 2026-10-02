@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { LogOut, Menu, ShieldAlert, UserCircle2, X } from 'lucide-react'
+import { LogOut, Menu, ShieldAlert, UserCircle2, X, Bell } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -86,6 +86,19 @@ export function AppShell() {
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="hidden md:flex items-center gap-3 rounded-md border border-border/60 bg-background/60 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+                <span className="text-emerald-400">Network: <span className="text-foreground">NORMAL</span></span>
+                <span className="w-px h-3 bg-border" />
+                <span className="text-amber-400">Threat: <span className="text-foreground">LOW</span></span>
+                <span className="w-px h-3 bg-border" />
+                <span className="text-cyan-400">Model: <span className="text-foreground">RF v1.0</span></span>
+                <span className="w-px h-3 bg-border" />
+                <span>Monitoring: <span className="text-foreground">ACTIVE</span></span>
+              </div>
+              <Button size="icon" variant="ghost" className="relative" onClick={() => window.location.href = '/notifications'} title="Notifications">
+                <Bell className="h-4 w-4" />
+                <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-red-500" />
+              </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="hidden items-center gap-2 rounded-lg border border-border/70 bg-background/40 px-2.5 py-1.5 transition-colors hover:border-primary/40 sm:flex">

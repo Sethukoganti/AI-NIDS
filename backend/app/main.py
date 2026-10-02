@@ -19,7 +19,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from app.api import alerts, assistant, auth, dashboard, datasets, health, live, model as model_api, predictions
+from app.api import (
+    admin,
+    alerts,
+    analyst,
+    assistant,
+    auth,
+    dashboard,
+    datasets,
+    health,
+    live,
+    model as model_api,
+    predictions,
+)
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.session import init_db
@@ -82,7 +94,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
-        {"name": "auth", "description": "JWT authentication and user administration"},
+        {"name": "auth", "description": "JWT authentication, permissions and user administration"},
+        {"name": "admin", "description": "Admin-only: settings, network status, users, roles, audit log"},
+        {"name": "analyst", "description": "Analyst workflow: analysis, alerts, predictions, investigations"},
         {"name": "datasets", "description": "Upload, profile and explore traffic datasets"},
         {"name": "predictions", "description": "Random Forest inference, jobs and record inspection"},
         {"name": "alerts", "description": "Security alerts and lifecycle management"},
@@ -117,6 +131,11 @@ app.add_middleware(                                # CORS (outermost)
 API = settings.API_PREFIX
 app.include_router(health.router, prefix=API)
 app.include_router(auth.router, prefix=API)
+# Role-specific consoles.  Both routers declare their own permission guards, so an
+# analyst token hitting /api/admin/* gets 403 from the admin router itself rather
+# than depending on anything the frontend does.
+app.include_router(admin.router, prefix=API)
+app.include_router(analyst.router, prefix=API)
 app.include_router(datasets.router, prefix=API)
 app.include_router(predictions.router, prefix=API)
 app.include_router(alerts.router, prefix=API)
