@@ -304,6 +304,48 @@ CONCEPT_ANSWERS = {
         "destination port is a sensitive service port). ≥0.90 is CRITICAL, ≥0.75 HIGH, ≥0.50 "
         "MEDIUM, otherwise LOW. Normal-traffic predictions are always LOW."
     ),
+    "dos": (
+        "Denial of Service (DoS) attacks attempt to exhaust network resources, CPU, memory, or connection "
+        "tables on a target host to deny access to authorized users. In CICIDS2017 features, DoS manifests as "
+        "abnormally elevated forward packet rates, short flow inter-arrival times, skewed forward/backward packet counts, "
+        "and frequent connection resets."
+    ),
+    "ddos": (
+        "Distributed Denial of Service (DDoS) multiplies DoS volume by orchestrating requests across distributed sources or "
+        "botnets against a single destination endpoint. Flow features typically show sharp spikes in packet arrival rates, "
+        "high aggregate flow bytes per second, and saturation of destination service ports."
+    ),
+    "port_scanning": (
+        "Port Scanning is the systematic interrogation of target host ports to identify open services, protocol versions, "
+        "and exploitable entry points. Model indicators typically include low packet counts per flow (1-3 SYN packets), "
+        "short flow durations, low payload byte counts, and rapid sequential destination port probing."
+    ),
+    "brute_force": (
+        "Brute Force attacks (such as SSH-Patator or FTP-Patator) systematically test password and credential combinations "
+        "against authentication daemons. Observed traffic patterns demonstrate repetitive connections to ports 21 or 22, "
+        "uniform flow duration distributions, and repeated handshake-and-termination sequences."
+    ),
+    "web_attack": (
+        "Web Attacks encompass SQL Injection, Cross-Site Scripting (XSS), and web credential abuse against HTTP/HTTPS endpoints. "
+        "Flows typically access ports 80, 443, or 8080, showing asymmetric payload lengths and elevated forward packet volumes "
+        "corresponding to malicious request payloads."
+    ),
+    "bot": (
+        "Bot traffic represents automated Command and Control (C2) communication or automated botnet coordination. Signatures "
+        "feature regular beaconing intervals, repetitive small payload exchanges, and persistent connections to external hosts."
+    ),
+    "infiltration": (
+        "Infiltration entails internal compromise where an adversary establishes a foothold within the perimeter and engages in "
+        "internal network reconnaissance, lateral movement, or privilege escalation across internal subnets."
+    ),
+    "heartbleed": (
+        "Heartbleed (CVE-2014-0160) exploits an OpenSSL TLS Heartbeat buffer over-read flaw on port 443. Attack flows typically "
+        "feature small TLS forward request lengths that trigger disproportionately large response payloads leaking server memory."
+    ),
+    "normal": (
+        "Normal Traffic represents standard, benign network communication conforming to RFC protocols, balanced forward and "
+        "backward packet transfers, and typical client-server request-response timing."
+    ),
     "out_of_scope": (
         "AI-NIDS is a defensive monitoring system: it classifies network-flow records that you "
         "upload. It does not scan, attack or modify any network, and it does not perform host "
@@ -318,6 +360,20 @@ INTENT_KEYWORDS = {
     "top_attack": ["most frequent attack", "most common attack", "which attack", "top attack", "appearing most"],
     "summary": ["summarize", "summarise", "summary", "overview of", "today's traffic", "todays traffic"],
     "model_info": ["accuracy", "model performance", "how accurate", "which model", "what model", "dataset"],
+    "explain_dos": ["what is dos", "explain dos", "denial of service", "slowloris", "hulk", "goldeneye"],
+    "explain_ddos": ["what is ddos", "explain ddos", "distributed denial"],
+    "explain_port_scan": ["port scan", "portscan", "reconnaissance", "probing ports"],
+    "explain_brute_force": ["brute force", "patator", "password attack", "credential attack"],
+    "explain_web_attack": ["web attack", "sql injection", "sqli", "xss", "cross site scripting"],
+    "explain_bot": ["botnet", "bot traffic", "c2", "command and control", "beaconing"],
+    "explain_infiltration": ["infiltration", "lateral movement", "internal breach"],
+    "explain_heartbleed": ["heartbleed", "cve-2014-0160"],
+    "explain_normal": ["normal traffic", "benign traffic", "what is normal"],
+    "network_state": ["network state", "network status", "threat level", "operational mode", "monitoring mode"],
+    "system_health": ["system health", "health check", "is the system healthy", "system status", "backend health"],
+    "config_explanation": ["detection config", "alert config", "configuration", "threshold setting", "sensitivity setting"],
+    "audit_activity": ["audit log", "admin activity", "recent change", "who changed", "what changed", "admin action"],
+    "investigation_summary": ["investigation", "incident", "active investigation", "summarize investigation"],
     "out_of_scope": ["hack", "exploit the", "attack a", "scan the network", "ddos the", "brute force the"],
 }
 
@@ -341,7 +397,7 @@ def _no_data() -> dict:
     }
 
 
-def answer(db, question: str, prediction_id: str | None = None) -> dict:
+def answer(db, question: str, prediction_id: str | None = None, user: Any | None = None) -> dict:
     """Answer an assistant question using real dashboard/model data."""
     from sqlalchemy import func, select
 
@@ -408,6 +464,156 @@ def answer(db, question: str, prediction_id: str | None = None) -> dict:
                 "n_test": evaluation.get("n_test"),
             },
             "sources": ["model_metadata.json", "evaluation.json"],
+        }
+
+    # Attack class concept explanations
+    for key, concept_key in [
+        ("explain_dos", "dos"),
+        ("explain_ddos", "ddos"),
+        ("explain_port_scan", "port_scanning"),
+        ("explain_brute_force", "brute_force"),
+        ("explain_web_attack", "web_attack"),
+        ("explain_bot", "bot"),
+        ("explain_infiltration", "infiltration"),
+        ("explain_heartbleed", "heartbleed"),
+        ("explain_normal", "normal"),
+    ]:
+        if intent == key:
+            profile = class_profiles().get("profiles", {}).get(concept_key, {})
+            return {
+                "provider": "local",
+                "answer": (
+                    f"### Attack Class Explanation: {concept_key.replace('_', ' ').title()}\n\n"
+                    f"**Summary**\n{CONCEPT_ANSWERS[concept_key]}\n\n"
+                    f"**Observed Characteristics in Model**\n"
+                    f"The Random Forest model was trained on CICIDS2017 flow statistics for this attack class. "
+                    f"When scoring a packet flow, high deviation in packet arrival rates, flow duration, and "
+                    f"sensitive port engagement push the model towards this classification.\n\n"
+                    f"**Recommended Response**\n"
+                    f"Open the related alert or flow in the Investigation Center to inspect the TreeSHAP contributions "
+                    f"and verify host destination ports before recommending remediation actions."
+                ),
+                "facts": {"class": concept_key, "profile_available": bool(profile)},
+                "sources": ["class_profiles.json", "cicids_config.py"],
+            }
+
+    # Operational state explanation
+    if intent == "network_state":
+        from app.services import network_status_service
+
+        status_info = network_status_service.current_dict(db)
+        return {
+            "provider": "local",
+            "answer": (
+                f"### Operational Network State: {status_info.get('label', 'Normal').upper()}\n\n"
+                f"**Summary**\n"
+                f"The platform is currently operating in **{status_info.get('label')}** status "
+                f"(source: {status_info.get('source', 'system')}).\n\n"
+                f"**Details**\n"
+                f"• Operational Status: `{status_info.get('status', 'normal')}`\n"
+                f"• Threat Level: `{status_info.get('tone', 'normal').upper()}`\n"
+                f"• Reason: {status_info.get('reason') or 'Standard operational baseline.'}\n"
+                f"• Operational Mode: {status_info.get('description', '')}\n\n"
+                f"**Why**\n"
+                f"Status transitions are triggered either manually by an Admin in the Network Control Center "
+                f"or automatically by threshold rules evaluating suspicious flow volume and active alerts."
+            ),
+            "facts": status_info,
+            "sources": ["network_status table", "network_modes.py"],
+        }
+
+    # System health explanation
+    if intent == "system_health":
+        from app.api.health import _system_payload
+
+        sys_data = _system_payload(db)
+        model_ready = model_service.is_loaded
+        return {
+            "provider": "local",
+            "answer": (
+                f"### System Health Overview: {sys_data['status'].upper()}\n\n"
+                f"**Status Checks**\n"
+                f"• Database: {'Connected and operational' if sys_data['database']['ok'] else 'Error'}\n"
+                f"• ML Model: {'Loaded (' + str(model_service.metadata.get('n_estimators', 100)) + ' trees)' if model_ready else 'Not loaded'}\n"
+                f"• API Service: Operational\n"
+                f"• Storage: {sys_data['uploads']['upload_files']} upload files ({round(sys_data['uploads']['upload_bytes'] / (1024*1024), 2)} MB)\n"
+                f"• Uptime: {round(sys_data['uptime_seconds'] / 3600, 1)} hours"
+            ),
+            "facts": sys_data,
+            "sources": ["health.py", "system_status"],
+        }
+
+    # Configuration explanation
+    if intent == "config_explanation":
+        from app.services import config_service
+
+        runtime = config_service.runtime_snapshot(db)
+        return {
+            "provider": "local",
+            "answer": (
+                f"### Active Detection & Alert Configuration\n\n"
+                f"• **Risk High Threshold**: {runtime.risk_high_threshold}\n"
+                f"• **Risk Critical Threshold**: {runtime.risk_critical_threshold}\n"
+                f"• **Alert Minimum Confidence**: {runtime.min_confidence_to_alert * 100:.0f}%\n"
+                f"• **Max Alerts per Job**: {runtime.max_alerts_per_job} distinct pairs\n"
+                f"• **Duplicate Alert Suppression**: {runtime.duplicate_handling.capitalize()}\n"
+                f"• **Auto Incident Creation**: {'Enabled' if runtime.auto_incident_creation else 'Disabled'} "
+                f"(severity >= {runtime.auto_incident_severity})"
+            ),
+            "facts": runtime.to_dict(),
+            "sources": ["configuration_revisions", "config_service.py"],
+        }
+
+    # Admin audit activity
+    if intent == "audit_activity":
+        role = getattr(user, "role", None) if user else "analyst"
+        if role != "admin":
+            return {
+                "provider": "local",
+                "answer": (
+                    "**Administrative Access Required**\n\n"
+                    "Audit logs and administrator actions require Admin privileges. "
+                    "As an Analyst, you can investigate traffic detections, model features, and alert queues."
+                ),
+                "facts": {"access_denied": True, "required_role": "admin"},
+                "sources": ["RBAC policy (audit.view)"],
+            }
+        from app.models.database_models import AuditLog
+
+        recent = db.scalars(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(6)).all()
+        log_items = [
+            f"• **{log.action}** on `{log.resource}` ({log.result}) at {log.timestamp.strftime('%H:%M:%S UTC') if log.timestamp else 'recently'}"
+            for log in recent
+        ]
+        return {
+            "provider": "local",
+            "answer": (
+                f"### Recent Administrative Activity\n\n"
+                + ("\n".join(log_items) if log_items else "No audit events recorded yet.")
+            ),
+            "facts": {"recent_logs": [log.to_dict() for log in recent]},
+            "sources": ["audit_logs table"],
+        }
+
+    # Investigation summary
+    if intent == "investigation_summary":
+        from app.services import investigation_service
+
+        inv_stats = investigation_service.investigation_stats(db)
+        return {
+            "provider": "local",
+            "answer": (
+                f"### Active Security Investigations Summary\n\n"
+                f"• **Total Investigations**: {inv_stats.get('total', 0)}\n"
+                f"• **Open / In Progress**: {inv_stats.get('open', 0) + inv_stats.get('in_progress', 0)}\n"
+                f"• **Escalated**: {inv_stats.get('escalated', 0)}\n"
+                f"• **Closed / Resolved**: {inv_stats.get('closed', 0)}\n\n"
+                f"**Analyst Guidance**\n"
+                f"Review high and critical severity incidents first. Check flow packet rates, duration, and "
+                f"destination port indicators before taking response actions."
+            ),
+            "facts": inv_stats,
+            "sources": ["investigations table", "investigation_service.py"],
         }
 
     # ---- data-dependent intents ---------------------------------------- #

@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.core.security import get_current_user, require_admin
+from app.core.rbac import (
+    P_DATASETS_DELETE,
+    P_DATASETS_UPLOAD,
+    P_DATASETS_VIEW,
+    require_permission,
+)
 from app.db.session import get_db
 from app.models.database_models import Dataset, User
 from app.models.schemas import (
@@ -15,7 +20,7 @@ from app.models.schemas import (
     DatasetPage,
     SampleDatasetRequest,
 )
-from app.services import dataset_service
+from app.services import config_service, dataset_service
 from app.services.preprocessing_service import DatasetError
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -25,12 +30,15 @@ logger = get_logger("ainids.api.datasets")
 @router.post("/upload", summary="Upload a network-flow CSV/parquet dataset")
 async def upload_dataset(
     file: UploadFile = File(..., description="CICIDS2017-compatible network-flow CSV"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_UPLOAD)),
     db: Session = Depends(get_db),
 ):
     raw = await file.read()
     try:
-        path, size = dataset_service.save_upload(raw, file.filename or "upload.csv")
+        runtime = config_service.runtime_snapshot(db)
+        path, size = dataset_service.save_upload(
+            raw, file.filename or "upload.csv", runtime=runtime
+        )
         dataset = dataset_service.register_dataset(
             db,
             filename=file.filename or path.name,
@@ -57,7 +65,7 @@ async def upload_dataset(
 @router.post("/sample", summary="Register a bundled held-out CICIDS2017 sample as a dataset")
 def use_sample(
     payload: SampleDatasetRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_UPLOAD)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -77,21 +85,21 @@ def list_datasets(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = None,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_VIEW)),
     db: Session = Depends(get_db),
 ):
     return dataset_service.list_datasets(db, page=page, page_size=page_size, search=search)
 
 
 @router.get("/reference", summary="Full CICIDS2017 reference statistics (real, from the build step)")
-def reference(user: User = Depends(get_current_user)):
+def reference(user: User = Depends(require_permission(P_DATASETS_VIEW))):
     return dataset_service.reference_dataset()
 
 
 @router.get("/{dataset_id}", response_model=DatasetDetailOut, summary="Dataset profile + sample rows")
 def dataset_detail(
     dataset_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_VIEW)),
     db: Session = Depends(get_db),
 ):
     dataset = dataset_service.dataset_detail(db, dataset_id)
@@ -108,7 +116,7 @@ def dataset_rows(
     search: str | None = None,
     sort_by: str | None = None,
     sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_VIEW)),
     db: Session = Depends(get_db),
 ):
     dataset = dataset_service.dataset_detail(db, dataset_id)
@@ -130,7 +138,7 @@ def dataset_rows(
 @router.delete("/{dataset_id}", summary="Delete a dataset (and its stored file)")
 def delete_dataset(
     dataset_id: str,
-    user: User = Depends(require_admin),
+    user: User = Depends(require_permission(P_DATASETS_DELETE)),
     db: Session = Depends(get_db),
 ):
     if not dataset_service.delete_dataset(db, dataset_id):
@@ -141,7 +149,7 @@ def delete_dataset(
 @router.get("/{dataset_id}/download", summary="Download the original stored file")
 def download_dataset(
     dataset_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(P_DATASETS_VIEW)),
     db: Session = Depends(get_db),
 ):
     from pathlib import Path

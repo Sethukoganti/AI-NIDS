@@ -10,6 +10,17 @@ import { DataHub } from '@/pages/DataHub'
 import { Settings } from '@/pages/Settings'
 import { LEGACY_REDIRECTS } from '@/lib/routes'
 import { NotFound } from '@/pages/NotFound'
+import { AssistantPage } from '@/pages/AssistantPage'
+import { AuditLogsPage } from '@/pages/AuditLogsPage'
+import { Investigations } from '@/pages/Investigations'
+import NetworkControl from '@/pages/NetworkControl'
+import { NotificationsPage } from '@/pages/NotificationsPage'
+import { ResponseCenter } from '@/pages/ResponseCenter'
+import { SystemHealthPage } from '@/pages/SystemHealthPage'
+import { UsersPage } from '@/pages/UsersPage'
+import AdminOverview from '@/pages/AdminOverview'
+import UserManagement from '@/pages/UserManagement'
+import SettingsCenter from '@/pages/SettingsCenter'
 
 /**
  * Route map. Everything under <AppShell /> requires a valid session — the shell
@@ -32,6 +43,19 @@ export function App() {
         <Route path="/model" element={<ModelHub />} />
         <Route path="/data" element={<DataHub />} />
         <Route path="/settings" element={<Settings />} />
+
+        {/* Admin-only control pages */}
+        <Route path="/admin/overview" element={<AdminOverview />} />
+        <Route path="/admin/network" element={<NetworkControl />} />
+        <Route path="/users" element={<UsersPage />} />
+        <Route path="/audit-logs" element={<AuditLogsPage />} />
+        <Route path="/system-health" element={<SystemHealthPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/investigations" element={<Investigations />} />
+        <Route path="/response-center" element={<ResponseCenter />} />
+        <Route path="/assistant" element={<AssistantPage />} />
+        <Route path="/admin/settings" element={<SettingsCenter />} />
+        <Route path="/admin/users" element={<UserManagement />} />
 
         {/* legacy links → grouped pages */}
         <Route path="/predictions" element={<Navigate to={LEGACY_REDIRECTS["/predictions"]} replace />} />

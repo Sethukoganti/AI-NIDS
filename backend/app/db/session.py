@@ -6,9 +6,10 @@ import logging
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, literal, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.schema import CreateColumn
 
 from app.core.config import settings
 
@@ -82,6 +83,51 @@ def init_db() -> None:
     from app.models import database_models  # noqa: F401  (register metadata)
 
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(bind: Engine) -> None:
+    """Apply additive model-column changes to databases created by older releases."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        preparer = connection.dialect.identifier_preparer
+
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+
+            existing_columns = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+
+                definition = str(CreateColumn(column).compile(dialect=connection.dialect))
+                if not column.nullable and column.default is not None:
+                    default = column.default.arg
+                    if not callable(default):
+                        value = str(
+                            literal(default).compile(
+                                dialect=connection.dialect,
+                                compile_kwargs={"literal_binds": True},
+                            )
+                        )
+                        definition += f" DEFAULT {value}"
+
+                for foreign_key in column.foreign_keys:
+                    target = foreign_key.column
+                    definition += (
+                        f" REFERENCES {preparer.format_table(target.table)}"
+                        f" ({preparer.quote(target.name)})"
+                    )
+
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {preparer.format_table(table)} "
+                        f"ADD COLUMN {definition}"
+                    )
+                )
+                existing_columns.add(column.name)
 
 
 def check_connection() -> tuple[bool, str | None]:

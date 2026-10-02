@@ -9,10 +9,16 @@ import {
   Settings,
   ShieldCheck,
   Upload,
+  Bell,
+  FileSearch,
+  Server,
+  Users,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/format'
 import { useHealth } from '@/hooks/useHealth'
+import { useAuth } from '@/context/AuthContext'
+import { useMemo } from 'react'
 
 interface NavItem {
   to: string
@@ -23,79 +29,52 @@ interface NavItem {
   alias?: string[]
 }
 
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
+
 /**
  * Deliberately short: six destinations, each with a plain-language hint, and one
  * obvious primary action. Related screens live inside a page's tabs rather than
  * in the sidebar, so a new user never has to guess which of nine entries holds
  * what they are looking for.
  */
-const GROUPS: { title: string; items: NavItem[] }[] = [
-  {
-    title: 'Monitor',
-    items: [
-      {
-        to: '/dashboard',
-        label: 'Overview',
-        hint: 'Live summary of the last analysis',
-        icon: LayoutDashboard,
-      },
-    ],
-  },
-  {
-    title: 'Investigate',
-    items: [
-      {
-        to: '/analyzer',
-        label: 'Analyze traffic',
-        hint: 'Upload a CSV and score it',
-        icon: Upload,
-      },
-      {
-        to: '/detections',
-        label: 'Detections',
-        hint: 'Flagged flows and alerts',
-        icon: AlertTriangle,
-        alias: ['/predictions', '/alerts'],
-      },
-    ],
-  },
-  {
-    title: 'Understand',
-    items: [
-      {
-        to: '/model',
-        label: 'AI model',
-        hint: 'Metrics, features, explanations',
-        icon: Brain,
-        alias: ['/insights'],
-      },
-      {
-        to: '/data',
-        label: 'Data',
-        hint: 'Datasets and live simulation',
-        icon: Database,
-        alias: ['/datasets', '/simulation'],
-      },
-    ],
-  },
-  {
-    title: 'System',
-    items: [
-      {
-        to: '/settings',
-        label: 'Settings',
-        hint: 'Account, users, system info',
-        icon: Settings,
-      },
-    ],
-  },
-]
-
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { health } = useHealth()
+  const { user } = useAuth()
   const location = useLocation()
+  const isAdmin = user?.role === 'admin'
   const online = health?.status === 'healthy'
   const degraded = health?.status === 'degraded'
+
+  const groups = useMemo<NavGroup[]>(() => {
+    const adminGroup: NavGroup[] = isAdmin ? [{ title: 'Admin', items: [
+      { to: '/admin/overview', label: 'Overview', hint: 'Admin control center', icon: LayoutDashboard },
+      { to: '/admin/network', label: 'Network Control', hint: 'Status & evaluation', icon: ShieldCheck },
+      { to: '/users', label: 'Users', hint: 'Manage accounts', icon: Users },
+      { to: '/audit-logs', label: 'Audit Logs', hint: 'Security events', icon: FileSearch },
+      { to: '/system-health', label: 'System Health', hint: 'Platform status', icon: Server },
+      { to: '/notifications', label: 'Notifications', hint: 'Alerts feed', icon: Bell },
+      { to: '/admin/settings', label: 'Settings', hint: 'All configuration', icon: Settings },
+    ] }] : []
+    const base: NavGroup[] = [
+      { title: 'Monitor', items: [{ to: '/dashboard', label: 'Overview', hint: 'Live summary of the last analysis', icon: LayoutDashboard }] },
+      { title: 'Investigate', items: [
+        { to: '/analyzer', label: 'Analyze traffic', hint: 'Upload a CSV and score it', icon: Upload },
+        { to: '/detections', label: 'Detections', hint: 'Flagged flows and alerts', icon: AlertTriangle, alias: ['/predictions', '/alerts'] },
+        { to: '/investigations', label: 'Investigations', hint: 'Open incidents', icon: AlertTriangle },
+        { to: '/assistant', label: 'AI Assistant', hint: 'Security copilot', icon: Brain },
+        { to: '/response-center', label: 'Response', hint: 'Actions & evidence', icon: ShieldCheck },
+      ] },
+      { title: 'Understand', items: [
+        { to: '/model', label: 'AI model', hint: 'Metrics, features, explanations', icon: Brain, alias: ['/insights'] },
+        { to: '/data', label: 'Data', hint: 'Datasets and live simulation', icon: Database, alias: ['/datasets', '/simulation'] },
+      ] },
+      { title: 'System', items: [{ to: '/settings', label: 'Settings', hint: 'Account, users, system info', icon: Settings }] },
+    ]
+    return [...adminGroup, ...base]
+  }, [isAdmin])
 
   return (
     <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-border/70 bg-panel/60 backdrop-blur-sm">
@@ -121,7 +100,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 space-y-3 overflow-y-auto px-2 pb-3">
-        {GROUPS.map((group) => (
+        {groups.map((group) => (
           <div key={group.title}>
             <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
               {group.title}

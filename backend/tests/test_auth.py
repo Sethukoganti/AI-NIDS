@@ -124,3 +124,38 @@ def test_auth_config_is_public_and_safe(client):
     assert body["demo_accounts_enabled"] is False or isinstance(body["demo_accounts"], list)
     assert "jwt" not in response.text.lower()
     assert settings.JWT_SECRET not in response.text
+
+
+def test_schema_upgrade_adds_user_columns_without_losing_accounts(tmp_path):
+    from sqlalchemy import create_engine, inspect, text
+
+    from app.db.session import _add_missing_columns
+
+    legacy_engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    with legacy_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE users ("
+            "id VARCHAR(36) PRIMARY KEY, name VARCHAR(120) NOT NULL, "
+            "email VARCHAR(255) NOT NULL, password_hash VARCHAR(255) NOT NULL, "
+            "role VARCHAR(20) NOT NULL, is_active BOOLEAN NOT NULL, "
+            "last_login_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"
+        )
+        connection.execute(
+            text(
+                "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at, updated_at) "
+                "VALUES ('legacy-id', 'Legacy Analyst', 'legacy@ainids.dev', 'preserved-hash', "
+                "'analyst', 1, '2025-01-01', '2025-01-01')"
+            )
+        )
+
+    _add_missing_columns(legacy_engine)
+
+    with legacy_engine.connect() as connection:
+        columns = {column["name"] for column in inspect(connection).get_columns("users")}
+        account = connection.execute(
+            text("SELECT email, password_hash, disabled_at, disabled_by, access_reset_at, notes FROM users")
+        ).one()
+    legacy_engine.dispose()
+
+    assert {"disabled_at", "disabled_by", "access_reset_at", "notes"} <= columns
+    assert account == ("legacy@ainids.dev", "preserved-hash", None, None, None, None)

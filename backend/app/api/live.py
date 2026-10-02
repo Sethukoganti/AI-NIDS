@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.logging import get_logger
-from app.core.security import get_current_user
+from app.core.rbac import P_TRAFFIC_ANALYZE, require_permission
 from app.services import live_service
 from app.services.ml_service import ModelUnavailableError
 
@@ -26,7 +26,7 @@ logger = get_logger("ainids.api.live")
 
 
 @router.get("/samples", summary="Available replay samples for the simulation")
-def samples(user=Depends(get_current_user)):
+def samples(user=Depends(require_permission(P_TRAFFIC_ANALYZE))):
     return {
         "samples": live_service.available_samples(),
         "disclaimer": (
@@ -45,6 +45,7 @@ async def stream(
     request: Request,
     rows: int = Query(120, ge=1, le=2000),
     sample: str = Query("simulation_stream.csv"),
+    user=Depends(require_permission(P_TRAFFIC_ANALYZE)),
 ):
     async def generator() -> AsyncIterator[str]:
         try:

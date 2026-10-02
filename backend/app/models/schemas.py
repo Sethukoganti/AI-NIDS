@@ -173,7 +173,18 @@ class SimulateRequest(BaseModel):
 # Alerts
 # --------------------------------------------------------------------------- #
 class AlertUpdateRequest(BaseModel):
-    status: Literal["new", "reviewed", "resolved", "open"] | None = None
+    status: (
+        Literal[
+            "new",
+            "acknowledged",
+            "reviewed",
+            "investigating",
+            "resolved",
+            "false_positive",
+            "open",
+        ]
+        | None
+    ) = None
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -234,3 +245,194 @@ class HealthResponse(BaseModel):
     checks: dict[str, Any]
     model: dict[str, Any]
     ai: dict[str, Any]
+
+
+# --------------------------------------------------------------------------- #
+# Administration
+# --------------------------------------------------------------------------- #
+class ConfigUpdateRequest(BaseModel):
+    """
+    A settings write.
+
+    ``values`` holds only the keys the admin actually changed, so an unchanged
+    field is never rewritten.  ``confirm_dangerous`` is required by the backend
+    whenever any field in the payload is flagged dangerous, which is what stops a
+    stale browser tab from silently weakening detection.
+    """
+
+    values: dict[str, Any]
+    note: str | None = Field(default=None, max_length=500)
+    confirm_dangerous: bool = False
+
+
+class ConfigUpdateResponse(BaseModel):
+    changed: list[str] = []
+    revision_ids: list[str] = []
+    values: dict[str, Any] = {}
+    effective_configuration: dict[str, Any] | None = None
+    warnings: list[str] = []
+
+
+class NetworkStatusChangeRequest(BaseModel):
+    status: str = Field(min_length=1, max_length=40)
+    reason: str = Field(min_length=5, max_length=500)
+    confirm: bool = False
+
+
+class UserUpdateRequest(BaseModel):
+    """Partial update of a user account; ``None`` fields are left untouched."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    role: Literal["admin", "analyst"] | None = None
+    is_active: bool | None = None
+    password: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def _password_strength(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if len(value) < settings.PASSWORD_MIN_LENGTH:
+            raise ValueError(
+                f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters long."
+            )
+        if value.isalpha() or value.isdigit():
+            raise ValueError("Password must contain both letters and numbers.")
+        return value
+
+
+class RoleUpdateRequest(BaseModel):
+    """Optional per-role permission override (``allow`` replaces the whole set)."""
+
+    description: str | None = Field(default=None, max_length=300)
+    add: list[str] = []
+    remove: list[str] = []
+    allow: list[str] | None = None
+
+
+class RoleOut(BaseModel):
+    name: str
+    description: str | None = None
+    permissions: list[str] = []
+    effective_permissions: list[str] = []
+    protected: list[str] = []
+    is_system: bool = True
+    user_count: int = 0
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    created_at: str | None = None
+    user_id: str | None = None
+    user_email: str | None = None
+    user_role: str | None = None
+    action: str
+    category: str
+    resource: str | None = None
+    result: str
+    previous_value: dict[str, Any] | None = None
+    new_value: dict[str, Any] | None = None
+    detail: dict[str, Any] = {}
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+
+class AuditLogPage(BaseModel):
+    items: list[AuditLogOut] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 50
+    pages: int = 1
+    summary: dict[str, Any] = {}
+
+
+class NotificationOut(BaseModel):
+    id: str
+    severity: str
+    category: str
+    title: str
+    message: str | None = None
+    resource: str | None = None
+    resource_id: str | None = None
+    target_role: str | None = None
+    is_read: bool = False
+    read_at: str | None = None
+    created_at: str | None = None
+
+
+class NotificationPage(BaseModel):
+    items: list[NotificationOut] = []
+    total: int = 0
+    unread: int = 0
+    page: int = 1
+    page_size: int = 25
+    pages: int = 1
+    categories: list[str] = []
+    severities: list[str] = []
+
+
+class ModelDeployRequest(BaseModel):
+    version: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=500)
+    confirm: bool = False
+
+
+class TrainingRunRequest(BaseModel):
+    dataset_id: str
+    config: dict[str, Any] = {}
+    note: str | None = Field(default=None, max_length=500)
+
+
+# --------------------------------------------------------------------------- #
+# Investigations
+# --------------------------------------------------------------------------- #
+class InvestigationCreateRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=200)
+    alert_id: str | None = None
+    prediction_id: str | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+
+
+class InvestigationUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=4000)
+    status: Literal["open", "in_progress", "pending", "escalated", "closed"] | None = None
+    priority: Literal["low", "medium", "high", "critical"] | None = None
+    assigned_to: str | None = None
+    note: str | None = Field(default=None, max_length=4000)
+    finding: str | None = Field(default=None, max_length=4000)
+
+
+class InvestigationOut(BaseModel):
+    id: str
+    reference: str
+    title: str
+    status: str
+    priority: str
+    assigned_to: str | None = None
+    created_by: str | None = None
+    alert_id: str | None = None
+    prediction_id: str | None = None
+    job_id: str | None = None
+    dataset_id: str | None = None
+    summary: str | None = None
+    findings: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    evidence: dict[str, Any] = {}
+    risk_level: str | None = None
+    attack_type: str | None = None
+    closed_at: str | None = None
+    closed_by: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class InvestigationPage(BaseModel):
+    items: list[InvestigationOut] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 25
+    pages: int = 1
+    statuses: list[str] = []
+    priorities: list[str] = []

@@ -13,6 +13,7 @@ import shutil
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -30,6 +31,10 @@ from app.services.preprocessing_service import (
     profile_dataframe,
     read_traffic_file,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.models.database_models import DatasetVersion
+    from app.services.config_service import RuntimeConfig
 
 logger = get_logger("ainids.datasets")
 
@@ -141,10 +146,10 @@ def register_dataset(
     return dataset
 
 
-def save_upload(file_bytes: bytes, filename: str) -> tuple[Path, int]:
+def save_upload(file_bytes: bytes, filename: str, runtime=None) -> tuple[Path, int]:
     """Validate and persist raw upload bytes to disk."""
     size = len(file_bytes)
-    error = validate_upload_filename(filename, size)
+    error = validate_upload_filename(filename, size, runtime=runtime)
     if error:
         raise DatasetError(error, 400)
 
@@ -187,7 +192,7 @@ def register_builtin_sample(db: Session, sample: str, user_id: str | None) -> Da
         )
     target = settings.upload_dir / f"sample_{sample}.csv"
     shutil.copy2(path, target)
-    return register_dataset(
+    dataset = register_dataset(
         db,
         filename=f"{sample}.csv (CICIDS2017 held-out sample)",
         stored_path=target,
@@ -195,6 +200,34 @@ def register_builtin_sample(db: Session, sample: str, user_id: str | None) -> Da
         user_id=user_id,
         source="sample",
     )
+
+    # Version 1 of the sample so an admin can promote it to a training candidate
+    # and every future change is attributable.
+    _record_sample_version(db, dataset, version=1, note="Initial registration of the held-out sample.")
+    db.commit()
+    return dataset
+
+
+def _record_sample_version(
+    db: Session, dataset: Dataset, *, version: int = 1, note: str | None = None
+) -> "DatasetVersion":
+    from app.models.database_models import DatasetVersion
+
+    row = DatasetVersion(
+        dataset_id=dataset.id,
+        version=version,
+        rows=dataset.rows,
+        columns=dataset.columns,
+        size_bytes=dataset.size_bytes,
+        columns_meta=dataset.columns_meta,
+        target_classes=dataset.attack_categories,
+        class_distribution=dataset.class_distribution,
+        note=note,
+        created_by=dataset.uploaded_by,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def sample_file(path_name: str) -> Path | None:
@@ -224,6 +257,56 @@ def list_datasets(db: Session, page: int = 1, page_size: int = 20, search: str |
 
 def dataset_detail(db: Session, dataset_id: str) -> Dataset | None:
     return db.get(Dataset, dataset_id)
+
+
+def record_version(
+    db: Session,
+    dataset: Dataset,
+    *,
+    note: str | None = None,
+    created_by: str | None = None,
+) -> "DatasetVersion":
+    """
+    Snapshot the current file of ``dataset`` as a new immutable version row.
+
+    Used when a file is replaced or promoted, so an admin can see what the
+    training run of a given week actually consumed.
+    """
+    from app.models.database_models import DatasetVersion
+
+    latest = db.scalar(
+        select(DatasetVersion)
+        .where(DatasetVersion.dataset_id == dataset.id)
+        .order_by(DatasetVersion.version.desc())
+        .limit(1)
+    )
+    version = (latest.version + 1) if latest else 1
+    row = DatasetVersion(
+        dataset_id=dataset.id,
+        version=version,
+        rows=dataset.rows,
+        columns=dataset.columns,
+        size_bytes=dataset.size_bytes,
+        columns_meta=dataset.columns_meta,
+        target_classes=dataset.attack_categories,
+        class_distribution=dataset.class_distribution,
+        note=note,
+        created_by=created_by,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def list_versions(db: Session, dataset_id: str) -> list[dict]:
+    from app.models.database_models import DatasetVersion
+
+    rows = db.scalars(
+        select(DatasetVersion)
+        .where(DatasetVersion.dataset_id == dataset_id)
+        .order_by(DatasetVersion.version.desc())
+    ).all()
+    return [row.to_dict() for row in rows]
 
 
 def _cache_preview(dataset_id: str, df: pd.DataFrame) -> None:

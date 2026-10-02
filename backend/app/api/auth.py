@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core import rbac
 from app.core.security import (
     ROLE_ADMIN,
     VALID_ROLES,
@@ -92,7 +93,14 @@ def logout(request: Request, user: User = Depends(get_current_user), db: Session
 
 @router.get("/me", summary="Current authenticated user")
 def me(user: User = Depends(get_current_user)):
-    return user.to_public_dict()
+    # The effective permission list is resolved from the database on every call,
+    # not read from the token: a role-permission override must reach the client
+    # without waiting for the token to expire. It is a hint for rendering only -
+    # every route re-checks server-side.
+    return {
+        **user.to_public_dict(),
+        "permissions": sorted(rbac.permissions_for(user.role)),
+    }
 
 
 @router.get("/config", summary="Public auth configuration for the login screen")

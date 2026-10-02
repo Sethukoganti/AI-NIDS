@@ -393,3 +393,132 @@ export interface LiveFlowEvent {
   ground_truth?: string | null
   cursor: { total: number; suspicious: number; progress: number }
 }
+
+export interface InvestigationNote {
+  text: string
+  author?: string
+  author_name?: string
+  timestamp?: string
+}
+
+export interface Investigation {
+  id: string
+  reference: string
+  title: string
+  status: 'open' | 'in_progress' | 'pending' | 'escalated' | 'closed'
+  priority: RiskLevel
+  assigned_to?: string | null
+  created_by?: string | null
+  alert_id?: string | null
+  prediction_id?: string | null
+  job_id?: string | null
+  dataset_id?: string | null
+  summary?: string | null
+  findings: string[]
+  notes: InvestigationNote[]
+  evidence?: Record<string, unknown>
+  risk_level: RiskLevel
+  attack_type?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  closed_at?: string | null
+  resolution?: string | null
+}
+
+export interface InvestigationPage {
+  items: Investigation[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+  statuses: string[]
+  priorities: string[]
+}
+
+export interface NetworkStatusOverview {
+  status: string
+  status_key: string
+  label: string
+  description: string
+  tone: 'success' | 'info' | 'warning' | 'danger'
+  evaluable: boolean
+  source: 'manual' | 'automatic' | 'system'
+  reason?: string | null
+  changed_by?: string | null
+  started_at?: string | null
+  indicators: Record<string, number>
+  triggers: { metric: string; operator: string; threshold: number; actual: number; trigger_type: string }[]
+  recommendation?: { status: string; reason: string; confidence: number; triggers: any[] }
+  profile: Record<string, unknown>
+  history?: NetworkStatusHistoryEntry[]
+}
+
+export interface NetworkStatusHistoryEntry {
+  id: string
+  status: string
+  previous_status?: string | null
+  source: string
+  reason?: string | null
+  changed_by?: string | null
+  started_at: string
+  ended_at?: string | null
+  duration_seconds?: number | null
+  indicators?: Record<string, number>
+  triggers?: any[]
+  configuration_snapshot?: Record<string, unknown>
+}
+
+export interface AuditLogEntry {
+  id: string
+  timestamp: string
+  user_id?: string | null
+  user_name?: string | null
+  user_role?: string | null
+  action: string
+  category: string
+  resource: string
+  previous_value?: Record<string, unknown> | null
+  new_value?: Record<string, unknown> | null
+  detail?: Record<string, unknown> | null
+  ip_address?: string | null
+  result: string
+}
+
+export interface NotificationItem {
+  id: string
+  timestamp: string
+  title: string
+  message: string
+  category: string
+  severity: string
+  is_read: boolean
+  read_at?: string | null
+  link?: string | null
+  data?: Record<string, unknown> | null
+}
+
+export interface ConfigFieldMeta {
+  key: string
+  title: string
+  type: string
+  default: unknown
+  current: unknown
+  description: string
+  recommended?: string | null
+  min?: number | null
+  max?: number | null
+  options?: string[]
+  requires_confirmation?: boolean
+  section: string
+}
+
+export interface ConfigDescribeResponse {
+  scope?: string
+  sections: { name: string; description: string; fields: ConfigFieldMeta[] }[]
+  section_order?: string[]
+  section_aliases?: Record<string, string>
+  scope_permissions?: Record<string, string>
+  effective_configuration?: Record<string, unknown>
+  values?: Record<string, unknown>
+  fields?: Record<string, ConfigFieldMeta>
+}
