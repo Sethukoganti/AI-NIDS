@@ -26,7 +26,7 @@ grounded LLM explanation layer.
 
 ## Quick start — one command
 
-You need **Node 18+** and **Python 3.10+** installed. Nothing else.
+You need **Node 18+** and **Python 3.11–3.13** installed. Nothing else.
 
 ```bash
 npm install          # once: installs the dashboard + backend dependencies
@@ -1069,7 +1069,7 @@ values from the bundled held-out sample):
 | SHAP explanation shows "model-level importance" | that record exceeded the SHAP budget or SHAP is unavailable — this is the documented, labelled fallback. |
 | Chinese/mojibake labels in a raw CICIDS2017 CSV | the original files contain encoding artefacts; `ml/build_dataset.py` normalises them — re-run the build instead of hand-editing. |
 | `sqlite3.OperationalError: database is locked` | delete the dev DB while the API is running, or use PostgreSQL for concurrent writes. |
-| `npm run dev` says Python was not found | install Python 3.10+ and make sure `python`/`python3` is on PATH (Windows: tick *Add python.exe to PATH*), or set `AINIDS_PYTHON` to the interpreter. |
+| `npm run dev` says Python was not found | install Python 3.11–3.13 and make sure `python`/`python3` is on PATH (Windows: tick *Add python.exe to PATH*), or set `AINIDS_PYTHON` to the interpreter. |
 | First `npm run dev` takes a while | that is the one-time dependency install (`.venv` + npm packages). Later runs start in seconds. |
 | Ports 8000/5173 already busy | the launcher reuses whatever is already listening; to force a different pair use `AINIDS_API_PORT=8010 AINIDS_WEB_PORT=5180 npm run dev`. |
 | Old bookmark opens the wrong page | legacy paths redirect automatically (`/alerts` → `/detections?tab=alerts` and friends); no action needed. |

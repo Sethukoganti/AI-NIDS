@@ -14,7 +14,7 @@ Open the printed URL (`http://localhost:5173`) and sign in:
 | Analyst | `analyst@ainids.dev` | `Analyst@123` |
 | Admin | `admin@ainids.dev` | `Admin@1234` |
 
-`npm run dev` needs only **Node 18+** and **Python 3.10+**. On the first run it creates `.env` with a
+`npm run dev` needs only **Node 18+** and **Python 3.11–3.13**. On the first run it creates `.env` with a
 generated JWT secret, builds a `.venv`, installs the Python and npm dependencies, checks the trained
 model files, then starts both servers with prefixed logs (`[api]`, `[web]`). `Ctrl+C` stops both.
 
@@ -55,7 +55,7 @@ AINIDS_API_PORT=8010 AINIDS_WEB_PORT=5180 npm run dev
 
 ## 4. If something goes wrong
 
-* **"Python was not found"** — install Python 3.10+ and ensure it is on PATH, or point
+* **"Python was not found"** — install Python 3.11–3.13 and ensure it is on PATH, or point
   `AINIDS_PYTHON=/path/to/python` at it.
 * **"model artifacts are missing"** — run `npm run train` (about a minute) and retry.
 * **Login shows "Too many requests"** — the login limiter is 10/minute per IP; wait a minute or

@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "AI-NIDS - AI-Powered Network Intrusion Detection System (React + TypeScript dashboard)",
+  "allowScripts": {
+    "esbuild": true
+  },
   "scripts": {
     "dev": "node ../scripts/dev.mjs",
     "build": "tsc -b && vite build",

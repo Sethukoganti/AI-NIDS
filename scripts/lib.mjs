@@ -160,7 +160,10 @@ function pythonCandidates() {
 }
 
 function pythonWorks(command) {
-  const result = runQuiet(command, ['-c', 'import sys; print(sys.version_info[:2])'])
+  const result = runQuiet(command, [
+    '-c',
+    'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] <= (3, 13) else 1)',
+  ])
   return result.status === 0
 }
 
@@ -197,8 +200,8 @@ export function ensurePython() {
   let python = findPython()
   if (!python) {
     throw new Error(
-      'Python 3.10+ was not found on your PATH.\n' +
-        '  Install it from https://www.python.org/downloads/ (tick "Add python.exe to PATH"), then run npm run dev again.',
+      'A supported Python 3.11–3.13 interpreter was not found on your PATH.\n' +
+        '  Install one from https://www.python.org/downloads/ (tick "Add python.exe to PATH"), then run npm run dev again.',
     )
   }
 
@@ -231,14 +234,22 @@ export function frontendDepsMissing() {
   return !existsSync(path.join(FRONTEND_DIR, 'node_modules', 'vite')) || !existsSync(path.join(FRONTEND_DIR, 'node_modules', 'react'))
 }
 
-export function installFrontendDeps({ quiet = false } = {}) {
+export function installFrontendDeps({ quiet = false, env } = {}) {
   log.step('installing frontend dependencies (first run only)…')
-  return run(NPM, ['install', '--no-fund', '--no-audit'], { cwd: FRONTEND_DIR, stdio: quiet ? 'ignore' : 'inherit' }).status === 0
+  return run(NPM, ['install', '--no-fund', '--no-audit'], {
+    cwd: FRONTEND_DIR,
+    stdio: quiet ? 'ignore' : 'inherit',
+    env,
+  }).status === 0
 }
 
 export function ensureFrontendDeps() {
   if (!frontendDepsMissing()) return false
-  if (!installFrontendDeps()) throw new Error('npm install failed in frontend/. Run it manually and retry.')
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'npm_config_allow_scripts') delete env[key]
+  }
+  if (!installFrontendDeps({ env })) throw new Error('npm install failed in frontend/. Run it manually and retry.')
   return true
 }
 
