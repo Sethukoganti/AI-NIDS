@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.models.database_models import Alert, Prediction, User
 from app.services import investigation_service, risk_service
+from app.services import network_blocklist_service
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.services.config_service import RuntimeConfig
@@ -326,13 +327,30 @@ def list_alerts(
         .limit(page_size)
     )
     rows = db.scalars(stmt).all()
+    blocklist = network_blocklist_service.active_networks(db)
+    items = []
+    for alert in rows:
+        data = alert.to_dict()
+        data["blocklist_network"] = network_blocklist_service.matching_network(
+            alert.source_ip, blocklist
+        )
+        items.append(data)
     return {
-        "items": [a.to_dict() for a in rows],
+        "items": items,
         "total": int(total),
         "page": page,
         "page_size": page_size,
         "pages": max(1, (int(total) + page_size - 1) // page_size),
     }
+
+
+def alert_dict(db: Session, alert: Alert) -> dict:
+    """Serialize an alert with its currently matching active policy, if any."""
+    data = alert.to_dict()
+    data["blocklist_network"] = network_blocklist_service.matching_network(
+        alert.source_ip, network_blocklist_service.active_networks(db)
+    )
+    return data
 
 
 def alert_summary(db: Session) -> dict:

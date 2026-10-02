@@ -9,7 +9,6 @@ import {
   FileCheck,
   FileSpreadsheet,
   Filter,
-  Lock,
   RefreshCw,
   Search,
   Server,
@@ -42,16 +41,15 @@ interface RecommendedActionItem {
   confidence: number
   targetPort?: number | null
   recommendedAction: string
-  status: 'recommended' | 'approved' | 'executed' | 'failed'
-  requiredRole: 'analyst' | 'admin'
-  requiresApproval: boolean
+  status: 'recommended' | 'acknowledged' | 'resolved' | 'failed'
   description: string
   timestamp: string
+  sourceIp?: string | null
+  blocklistNetwork?: string | null
 }
 
 export function ResponseCenter() {
-  const { user, isAdmin } = useAuth()
-  const [alerts, setAlerts] = useState<Alert[]>([])
+  const { isAdmin } = useAuth()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
@@ -60,6 +58,7 @@ export function ResponseCenter() {
   const [actions, setActions] = useState<RecommendedActionItem[]>([])
   const [selectedAction, setSelectedAction] = useState<RecommendedActionItem | null>(null)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
+  const [responseMode, setResponseMode] = useState<'acknowledge' | 'block'>('acknowledge')
   const [actionStatusFilter, setActionStatusFilter] = useState('all')
 
   const loadData = useCallback(async () => {
@@ -67,28 +66,23 @@ export function ResponseCenter() {
     try {
       const alertData = await api.get<{ items: Alert[] }>('/alerts?page=1&page_size=50&status=open')
       const items = alertData.items || []
-      setAlerts(items)
 
       // Derive structured recommended response items based on attack signatures
       const derived: RecommendedActionItem[] = items.map((a) => {
         let recommendation = 'Investigate flow patterns & verify destination service'
-        let requiresApproval = false
 
         if (a.severity === 'critical') {
           recommendation = 'Escalate to Senior Incident Handler & prepare firewall rate-limiting advisory'
-          requiresApproval = true
         } else if (a.attack_type.toLowerCase().includes('port scan')) {
           recommendation = 'Generate destination port scan advisory & correlate scanning source'
         } else if (a.attack_type.toLowerCase().includes('ddos') || a.attack_type.toLowerCase().includes('dos')) {
           recommendation = 'Recommend volumetric mitigation rule on upstream router'
-          requiresApproval = true
         } else if (a.attack_type.toLowerCase().includes('brute force')) {
           recommendation = 'Advise credential rotation & rate-limit authentication daemon'
         } else if (a.attack_type.toLowerCase().includes('web')) {
           recommendation = 'Inspect WAF rules & inspect target application request parameters'
         } else if (a.attack_type.toLowerCase().includes('heartbleed')) {
           recommendation = 'Verify OpenSSL package version on target endpoint (CVE-2014-0160)'
-          requiresApproval = true
         }
 
         return {
@@ -99,11 +93,11 @@ export function ResponseCenter() {
           confidence: a.confidence,
           targetPort: a.destination_port,
           recommendedAction: recommendation,
-          status: a.status === 'reviewed' ? 'approved' : a.status === 'resolved' ? 'executed' : 'recommended',
-          requiredRole: requiresApproval ? 'admin' : 'analyst',
-          requiresApproval,
+          status: a.status === 'reviewed' ? 'acknowledged' : a.status === 'resolved' ? 'resolved' : 'recommended',
           description: a.message,
           timestamp: a.created_at || new Date().toISOString(),
+          sourceIp: a.source_ip,
+          blocklistNetwork: a.blocklist_network,
         }
       })
 
@@ -120,20 +114,39 @@ export function ResponseCenter() {
     loadData()
   }, [loadData])
 
-  const handleExecuteAction = async (action: RecommendedActionItem) => {
+  const handleAcknowledgeAction = async (action: RecommendedActionItem) => {
     try {
-      // Execute the local response workflow: mark alert reviewed/acknowledged
       await api.patch(`/alerts/${action.alertId}`, {
         status: 'reviewed',
-        notes: `Response action approved: ${action.recommendedAction}`,
+        notes: `Admin acknowledged recommendation: ${action.recommendedAction}`,
       })
 
       setActions((prev) =>
-        prev.map((act) => (act.id === action.id ? { ...act, status: 'approved' } : act))
+        prev.map((act) => (act.id === action.id ? { ...act, status: 'acknowledged' } : act))
       )
-      setActionNotice(`Action ${action.id} approved for alert ${action.alertId}. Response ticket recorded.`)
+      setActionNotice(`Alert ${action.alertId} acknowledged. This records triage only; it does not block network traffic.`)
       setConfirmDialogOpen(false)
       setSelectedAction(null)
+      await loadData()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const handleBlockSource = async (action: RecommendedActionItem) => {
+    if (!action.sourceIp) return
+    try {
+      const result = await api.post<{ rule: { network: string } }>('/admin/network/blocks', {
+        network: action.sourceIp,
+        reason: `Source of ${action.attackType} alert ${action.alertId}`,
+        alert_id: action.alertId,
+      })
+      setActionNotice(
+        `${result.rule.network} was added to the AI-NIDS analysis blocklist and alert ${action.alertId} was resolved. Future analyzed flows will be labeled; no firewall or live traffic was changed.`,
+      )
+      setConfirmDialogOpen(false)
+      setSelectedAction(null)
+      await loadData()
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -209,7 +222,7 @@ export function ResponseCenter() {
           <span>Workflow Clarification: Detection vs. Investigation vs. Response</span>
         </div>
         <p className="leading-relaxed">
-          AI-NIDS functions as a defensive detection and analysis system. To prevent unauthorized or destructive network interference, the system generates <strong>RECOMMENDED ACTIONS</strong>. Active mitigations require deliberate operator confirmation and actual downstream network/firewall integration rather than simulated blocking.
+          AI-NIDS detects and analyzes imported flow data. Admins can manage an application-side IP/CIDR blocklist and resolve alerts from a source IP, but this does not block live packets or change a firewall. The sample CICIDS2017 data has no host IP addresses, so source blocking is available only when the analyzed dataset supplies them.
         </p>
       </div>
 
@@ -224,19 +237,19 @@ export function ResponseCenter() {
         <StatCard
           title="Critical Actions"
           value={formatNumber(actions.filter((a) => a.severity === 'critical').length)}
-          hint="Require Admin sign-off"
+          hint="High-priority detections"
           icon={ShieldAlert}
         />
         <StatCard
-          title="Approved Actions"
-          value={formatNumber(actions.filter((a) => a.status === 'approved').length)}
-          hint="Validated by analyst/admin"
+          title="Acknowledged Alerts"
+          value={formatNumber(actions.filter((a) => a.status === 'acknowledged').length)}
+          hint="Triage only; no network action"
           icon={CheckCircle2}
         />
         <StatCard
-          title="Integrated Network Status"
-          value="Advisory"
-          hint="Active telemetry monitoring"
+          title="Network Enforcement"
+          value="App-side"
+          hint="No firewall integration"
           icon={Server}
         />
       </div>
@@ -269,8 +282,8 @@ export function ResponseCenter() {
                 >
                   <option value="all">All States</option>
                   <option value="recommended">Recommended</option>
-                  <option value="approved">Approved</option>
-                  <option value="executed">Executed</option>
+                  <option value="acknowledged">Acknowledged</option>
+                  <option value="resolved">Resolved</option>
                 </Select>
               </div>
             </CardHeader>
@@ -289,10 +302,10 @@ export function ResponseCenter() {
                         <TableHead>Action ID</TableHead>
                         <TableHead>Attack Family</TableHead>
                         <TableHead>Severity</TableHead>
+                        <TableHead>Representative Source IP</TableHead>
                         <TableHead>Target Port</TableHead>
                         <TableHead>Recommended Mitigation</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Role Reqd</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -304,6 +317,10 @@ export function ResponseCenter() {
                           <TableCell>
                             <RiskBadge level={act.severity} />
                           </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {act.sourceIp ?? 'Not in dataset'}
+                            {act.blocklistNetwork && <div><Badge variant="danger" className="mt-1 text-[10px]">Policy match</Badge></div>}
+                          </TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">
                             {act.targetPort ? `Port ${act.targetPort}` : 'All'}
                           </TableCell>
@@ -313,9 +330,9 @@ export function ResponseCenter() {
                           <TableCell>
                             <Badge
                               variant={
-                                act.status === 'approved'
+                                act.status === 'acknowledged'
                                   ? 'success'
-                                  : act.status === 'executed'
+                                  : act.status === 'resolved'
                                   ? 'default'
                                   : act.status === 'failed'
                                   ? 'destructive'
@@ -324,11 +341,6 @@ export function ResponseCenter() {
                               className="text-[11px] uppercase tracking-wider"
                             >
                               {act.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                              {act.requiredRole}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
@@ -344,24 +356,34 @@ export function ResponseCenter() {
                               </Button>
 
                               {act.status === 'recommended' && (
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  className="text-xs h-7"
-                                  disabled={act.requiresApproval && !isAdmin}
-                                  onClick={() => {
-                                    setSelectedAction(act)
-                                    setConfirmDialogOpen(true)
-                                  }}
-                                >
-                                  {act.requiresApproval && !isAdmin ? (
-                                    <span className="flex items-center gap-1">
-                                      <Lock className="h-3 w-3" /> Admin Only
-                                    </span>
-                                  ) : (
-                                    'Approve Action'
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-xs h-7"
+                                    onClick={() => {
+                                      setResponseMode('acknowledge')
+                                      setSelectedAction(act)
+                                      setConfirmDialogOpen(true)
+                                    }}
+                                  >
+                                    Acknowledge
+                                  </Button>
+                                  {isAdmin && act.sourceIp && !act.blocklistNetwork && (
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="text-xs h-7"
+                                      onClick={() => {
+                                        setResponseMode('block')
+                                        setSelectedAction(act)
+                                        setConfirmDialogOpen(true)
+                                      }}
+                                    >
+                                      <ShieldAlert className="h-3 w-3" /> Add block policy
+                                    </Button>
                                   )}
-                                </Button>
+                                </>
                               )}
                             </div>
                           </TableCell>
@@ -484,9 +506,11 @@ export function ResponseCenter() {
       <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm Response Action</DialogTitle>
+            <DialogTitle>{responseMode === 'block' ? 'Add source to the analysis blocklist?' : 'Acknowledge this recommendation?'}</DialogTitle>
             <DialogDescription>
-              Validate this mitigation before stamping approval onto the incident record.
+              {responseMode === 'block'
+                ? 'This adds the representative flow source IP to AI-NIDS policy, resolves the alert, and labels matching flows in future analyses. If this alert aggregates flows from multiple IPs, only the displayed source is added. It does not block live network traffic.'
+                : 'This marks the alert as reviewed for operator triage only; it does not execute a network mitigation.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -496,6 +520,7 @@ export function ResponseCenter() {
                 <div className="text-muted-foreground">Action Ref: <strong className="text-foreground font-mono">{selectedAction.id}</strong></div>
                 <div className="text-muted-foreground">Attack Type: <strong className="text-foreground">{selectedAction.attackType}</strong></div>
                 <div className="text-muted-foreground">Severity: <strong className="text-foreground uppercase">{selectedAction.severity}</strong></div>
+                <div className="text-muted-foreground">Source IP: <strong className="text-foreground font-mono">{selectedAction.sourceIp ?? 'not present in dataset'}</strong></div>
               </div>
 
               <div className="space-y-1">
@@ -504,7 +529,9 @@ export function ResponseCenter() {
               </div>
 
               <p className="text-[11px] text-muted-foreground">
-                Approving this action marks the alert as reviewed and stamps your operator ID into the audit log.
+                {responseMode === 'block'
+                  ? 'The action is recorded in the admin audit log and can be released from Network Control.'
+                  : 'Acknowledging marks the alert as reviewed without changing network enforcement.'}
               </p>
             </div>
           )}
@@ -513,8 +540,17 @@ export function ResponseCenter() {
             <Button variant="outline" size="sm" onClick={() => setConfirmDialogOpen(false)}>
               Cancel
             </Button>
-            <Button size="sm" onClick={() => selectedAction && handleExecuteAction(selectedAction)}>
-              Approve & Stamp Action
+            <Button
+              size="sm"
+              variant={responseMode === 'block' ? 'destructive' : 'default'}
+              disabled={responseMode === 'block' && (!selectedAction?.sourceIp || !isAdmin)}
+              onClick={() => {
+                if (!selectedAction) return
+                if (responseMode === 'block') void handleBlockSource(selectedAction)
+                else void handleAcknowledgeAction(selectedAction)
+              }}
+            >
+              {responseMode === 'block' ? 'Add policy & resolve alert' : 'Acknowledge alert'}
             </Button>
           </DialogFooter>
         </DialogContent>

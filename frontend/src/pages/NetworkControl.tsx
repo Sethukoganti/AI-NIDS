@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ShieldCheck, Clock, RefreshCw } from 'lucide-react'
+import { ShieldCheck, Clock, RefreshCw, Ban, Plus, Unlock } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -18,6 +18,16 @@ type NetworkStatusHistoryEntry = {
   changed_by?: string | null
 }
 
+type NetworkBlockRule = {
+  id: string
+  network: string
+  reason: string
+  active: boolean
+  source_alert_id?: string | null
+  activated_at?: string | null
+  released_at?: string | null
+}
+
 export default function NetworkControl() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
@@ -30,6 +40,10 @@ export default function NetworkControl() {
   const [newStatus, setNewStatus] = useState('')
   const [reason, setReason] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [blockRules, setBlockRules] = useState<NetworkBlockRule[]>([])
+  const [blockNetwork, setBlockNetwork] = useState('')
+  const [blockReason, setBlockReason] = useState('')
+  const [savingBlock, setSavingBlock] = useState(false)
 
   const loadStatus = useCallback(async () => {
     setLoading(true)
@@ -41,6 +55,8 @@ export default function NetworkControl() {
         '/admin/network/status/history?limit=20',
       )
       setHistory(response.items ?? [])
+      const blocks = await api.get<{ items: NetworkBlockRule[] }>('/admin/network/blocks')
+      setBlockRules(blocks.items ?? [])
     } catch (e: any) {
       setError(errorMessage(e))
     } finally {
@@ -76,10 +92,38 @@ export default function NetworkControl() {
     }
   }
 
+  const addBlockRule = async () => {
+    if (!blockNetwork.trim() || !blockReason.trim()) return
+    setSavingBlock(true)
+    setError(null)
+    try {
+      await api.post('/admin/network/blocks', {
+        network: blockNetwork.trim(),
+        reason: blockReason.trim(),
+      })
+      setBlockNetwork('')
+      setBlockReason('')
+      await loadStatus()
+    } catch (e: any) {
+      setError(errorMessage(e))
+    } finally {
+      setSavingBlock(false)
+    }
+  }
+
+  const releaseBlockRule = async (rule: NetworkBlockRule) => {
+    setError(null)
+    try {
+      await api.del(`/admin/network/blocks/${rule.id}`)
+      await loadStatus()
+    } catch (e: any) {
+      setError(errorMessage(e))
+    }
+  }
+
   if (user?.role !== 'admin') return <div className="p-8 text-center"><h2 className="text-xl font-semibold mb-2">Access denied</h2><p className="text-muted-foreground">Admin only.</p></div>
 
   if (loading) return <div className="p-8 space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-64 w-full" /></div>
-  if (error) return <div className="p-8"><div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">{error}</div></div>
 
   const st = status?.status ?? 'unknown'
   const label = status?.label ?? 'Unknown'
@@ -145,6 +189,43 @@ export default function NetworkControl() {
             <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b"><th className="text-left py-2 font-medium">Time</th><th>Status</th><th>Source</th><th>Reason</th><th>Changed by</th></tr></thead><tbody>{history.map((h:any,i:number) => (
               <tr key={i} className="border-b border-border/40"><td className="py-2 text-muted-foreground">{h.started_at ? new Date(h.started_at).toLocaleString() : '-'}</td><td><Badge variant="outline" className="text-[10px]">{h.status}</Badge></td><td>{h.source}</td><td className="max-w-xs truncate">{h.reason ?? '-'}</td><td>{h.changed_by ?? '-'}</td></tr>
             ))}</tbody></table></div>
+          )}
+        </CardContent>
+      </Card>
+
+      {error && <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive">{error}</div>}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base"><Ban className="h-4 w-4 text-rose-400" />Managed IP / CIDR Blocklist</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Active entries label matching source IPs in future analyzed flow data and help admins track response policy.
+            They do not block live packets or configure a firewall.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_2fr_auto] md:items-end">
+            <div className="space-y-1"><Label htmlFor="block-network">IP address or CIDR</Label><Input id="block-network" value={blockNetwork} onChange={(event) => setBlockNetwork(event.target.value)} placeholder="203.0.113.8 or 203.0.113.0/24" /></div>
+            <div className="space-y-1"><Label htmlFor="block-reason">Reason</Label><Input id="block-reason" value={blockReason} onChange={(event) => setBlockReason(event.target.value)} placeholder="Why is this source network on the blocklist?" /></div>
+            <Button onClick={addBlockRule} disabled={savingBlock || !blockNetwork.trim() || !blockReason.trim()}><Plus className="h-4 w-4" />Add policy</Button>
+          </div>
+          {blockRules.length === 0 ? (
+            <div className="rounded-md border border-dashed p-5 text-center text-xs text-muted-foreground">No IP/CIDR policies have been added.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b text-left"><th className="py-2">Network</th><th>State</th><th>Reason</th><th>Added</th><th className="text-right">Action</th></tr></thead>
+                <tbody>{blockRules.map((rule) => (
+                  <tr key={rule.id} className="border-b border-border/40">
+                    <td className="py-2 font-mono">{rule.network}</td>
+                    <td><Badge variant={rule.active ? 'danger' : 'outline'}>{rule.active ? 'Active policy' : 'Released'}</Badge></td>
+                    <td className="max-w-sm truncate">{rule.reason}</td>
+                    <td>{rule.activated_at ? new Date(rule.activated_at).toLocaleString() : '—'}</td>
+                    <td className="text-right">{rule.active && <Button size="sm" variant="outline" onClick={() => releaseBlockRule(rule)}><Unlock className="h-3 w-3" />Release</Button>}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>

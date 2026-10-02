@@ -62,7 +62,7 @@ def alert_detail(
     alert = db.get(Alert, alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found.")
-    data = alert.to_dict()
+    data = alert_service.alert_dict(db, alert)
     if alert.prediction_id:
         data["prediction_url"] = f"/api/predictions/{alert.prediction_id}"
     return data

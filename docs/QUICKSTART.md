@@ -21,6 +21,11 @@ model files, then starts both servers with prefixed logs (`[api]`, `[web]`). `Ct
 Already have servers running? The launcher reuses them instead of starting duplicates, so a second
 `npm run dev` is harmless. Want different ports?
 
+Admins can add and release IP/CIDR policies under **Network Control**, or add a detected source IP
+from the **Response Center** and resolve its alert. Matching addresses are labeled in subsequent
+analyses. This is an application-side analysis policy only; it does not block live packets or update
+a firewall. Source-IP controls are available only when the input dataset contains source addresses.
+
 ```bash
 AINIDS_API_PORT=8010 AINIDS_WEB_PORT=5180 npm run dev
 ```

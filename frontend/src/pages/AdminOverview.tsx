@@ -118,7 +118,7 @@ export default function AdminOverview() {
               <div className="rounded-md bg-muted p-3"><div className="text-muted-foreground">Configuration changes</div><div className="text-lg font-semibold">{systemHealth?.audit_summary?.config_changes ?? '--'}</div></div>
             </div>
             <div className="text-xs text-muted-foreground">Recent audit entries: {auditItems.length > 0 ? auditItems.slice(0,3).map((a:any) => a.action).join(', ') : 'None loaded'}</div>
-            <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => window.location.href = '/users'}>User Management</Button><Button size="sm" variant="outline" onClick={() => window.location.href = '/settings'}>Settings Center</Button><Button size="sm" variant="outline" onClick={() => window.location.href = '/network'}>Network Control</Button></div>
+            <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => window.location.href = '/users'}>User Management</Button><Button size="sm" variant="outline" onClick={() => window.location.href = '/settings'}>Settings Center</Button><Button size="sm" variant="outline" onClick={() => window.location.href = '/admin/network'}>Network Control</Button></div>
           </CardContent>
         </Card>
       </div>

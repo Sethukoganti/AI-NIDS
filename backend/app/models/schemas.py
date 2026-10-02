@@ -117,6 +117,7 @@ class PredictionOut(BaseModel):
     destination_port: int | None = None
     source_ip: str | None = None
     destination_ip: str | None = None
+    blocklist_network: str | None = None
     protocol: str | None = None
     flow_duration: float | None = None
     packet_rate: float | None = None
@@ -201,6 +202,7 @@ class AlertOut(BaseModel):
     confidence: float
     risk_score: float
     source_ip: str | None = None
+    blocklist_network: str | None = None
     destination_port: int | None = None
     record_index: int | None = None
     created_at: str | None = None
@@ -277,6 +279,17 @@ class NetworkStatusChangeRequest(BaseModel):
     status: str = Field(min_length=1, max_length=40)
     reason: str = Field(min_length=5, max_length=500)
     confirm: bool = False
+
+
+class NetworkBlockRequest(BaseModel):
+    network: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=3, max_length=500)
+    alert_id: str | None = Field(default=None, max_length=36)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class UserUpdateRequest(BaseModel):

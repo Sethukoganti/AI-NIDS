@@ -114,6 +114,9 @@ export function PredictionDetailDialog({
                 <VerdictBadge isAttack={detail.is_attack} label={detail.prediction} />
                 <RiskBadge level={detail.risk_level} />
                 <Badge variant="secondary">source: {detail.source}</Badge>
+                {detail.blocklist_network && (
+                  <Badge variant="danger">Blocklist policy match: {detail.blocklist_network}</Badge>
+                )}
                 {detail.ground_truth && (
                   <Badge variant={detail.ground_truth === detail.prediction ? 'success' : 'warning'}>
                     ground truth: {detail.ground_truth}
@@ -147,6 +150,11 @@ export function PredictionDetailDialog({
                   <KeyValue label="Source port" value={detail.source_port ?? '—'} mono />
                   <KeyValue label="Destination port" value={detail.destination_port ?? '—'} mono />
                   <KeyValue label="Source IP" value={detail.source_ip ?? 'not in dataset'} mono />
+                  {detail.blocklist_network && (
+                    <p className="pt-1 text-[10px] text-muted-foreground">
+                      Matched the application-side analysis policy. This does not indicate that a firewall blocked the traffic.
+                    </p>
+                  )}
                   <KeyValue label="Destination IP" value={detail.destination_ip ?? 'not in dataset'} mono />
                   <KeyValue label="Protocol" value={detail.protocol ?? '—'} mono />
                   <KeyValue

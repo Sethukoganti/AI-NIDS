@@ -277,6 +277,7 @@ class Prediction(Base, TimestampMixin):
     destination_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     destination_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    blocklist_network: Mapped[str | None] = mapped_column(String(128), nullable=True)
     protocol: Mapped[str | None] = mapped_column(String(32), nullable=True)
     flow_duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     packet_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -308,6 +309,7 @@ class Prediction(Base, TimestampMixin):
             "destination_port": self.destination_port,
             "source_ip": self.source_ip,
             "destination_ip": self.destination_ip,
+            "blocklist_network": self.blocklist_network,
             "protocol": self.protocol,
             "flow_duration": self.flow_duration,
             "packet_rate": self.packet_rate,
@@ -384,6 +386,37 @@ class Alert(Base, TimestampMixin):
             "escalated_at": self.escalated_at.isoformat() if self.escalated_at else None,
             "investigation_id": self.investigation_id,
             "notes": self.notes,
+        }
+
+
+# --------------------------------------------------------------------------- #
+class NetworkBlockRule(Base, TimestampMixin):
+    """Admin-managed IP/CIDR policy applied as a label to analyzed flows."""
+
+    __tablename__ = "network_block_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    network: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    source_alert_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    released_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "network": self.network,
+            "reason": self.reason,
+            "active": self.active,
+            "source_alert_id": self.source_alert_id,
+            "created_by": self.created_by,
+            "released_by": self.released_by,
+            "activated_at": self.activated_at.isoformat() if self.activated_at else None,
+            "released_at": self.released_at.isoformat() if self.released_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -1198,4 +1231,3 @@ def _duration_label_seconds(seconds: int | None) -> str:
     if secs or not parts:
         parts.append(f"{secs}s")
     return " ".join(parts[:3])
-

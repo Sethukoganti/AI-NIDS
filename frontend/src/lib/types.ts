@@ -94,6 +94,7 @@ export interface Alert {
   confidence: number
   risk_score: number
   source_ip?: string | null
+  blocklist_network?: string | null
   destination_port?: number | null
   record_index?: number | null
   created_at?: string | null
@@ -156,6 +157,7 @@ export interface Prediction {
   destination_port?: number | null
   source_ip?: string | null
   destination_ip?: string | null
+  blocklist_network?: string | null
   protocol?: string | null
   flow_duration?: number | null
   packet_rate?: number | null

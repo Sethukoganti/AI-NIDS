@@ -17,6 +17,7 @@ endpoints live in :mod:`app.api.analyst`.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address, ip_network
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
@@ -46,12 +47,13 @@ from app.core.rbac import (
 )
 from app.core.security import get_current_user, hash_password, require_admin  # noqa: F401
 from app.db.session import get_db
-from app.models.database_models import Role, User
+from app.models.database_models import Alert, NetworkBlockRule, Role, User
 from app.models.schemas import (
     AuditLogPage,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
     ModelDeployRequest,
+    NetworkBlockRequest,
     NetworkStatusChangeRequest,
     NotificationPage,
     RoleUpdateRequest,
@@ -63,6 +65,7 @@ from app.services import (
     config_service,
     dataset_service,
     investigation_service,
+    network_blocklist_service,
     network_status_service,
     notification_service,
     prediction_service,
@@ -328,6 +331,139 @@ def _warnings_for(scope: str, result: dict) -> list[str]:
 # --------------------------------------------------------------------------- #
 # Network status
 # --------------------------------------------------------------------------- #
+@router.get("/network/blocks", summary="List admin-managed IP/CIDR analysis policies")
+def list_network_blocks(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rules = db.scalars(
+        select(NetworkBlockRule).order_by(
+            NetworkBlockRule.active.desc(), NetworkBlockRule.activated_at.desc()
+        )
+    ).all()
+    return {
+        "items": [rule.to_dict() for rule in rules],
+        "enforcement": "analysis_label_only",
+    }
+
+
+@router.post("/network/blocks", summary="Add an IP/CIDR policy and optionally resolve its alert")
+def add_network_block(
+    payload: NetworkBlockRequest,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        network = network_blocklist_service.normalize_network(payload.network)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    alert = None
+    if payload.alert_id:
+        alert = db.get(Alert, payload.alert_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found.")
+        if not alert.source_ip:
+            raise HTTPException(
+                status_code=422,
+                detail="This alert has no source IP. Add a policy manually using an IP/CIDR from the source dataset.",
+            )
+        try:
+            source_address = ip_address(alert.source_ip.strip())
+            policy_network = ip_network(network)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="The alert source IP is not a valid address.") from exc
+        if source_address.version != policy_network.version or source_address not in policy_network:
+            raise HTTPException(
+                status_code=422,
+                detail="The selected network does not contain this alert's source IP.",
+            )
+
+    duplicate = db.scalar(
+        select(NetworkBlockRule).where(
+            NetworkBlockRule.network == network,
+            NetworkBlockRule.active.is_(True),
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="That IP/CIDR already has an active policy.")
+
+    rule = NetworkBlockRule(
+        network=network,
+        reason=payload.reason.strip(),
+        source_alert_id=alert.id if alert else None,
+        created_by=user.id,
+    )
+    db.add(rule)
+    db.flush()
+
+    if alert is not None:
+        from app.services import alert_service
+
+        alert_service.update_alert(
+            db,
+            alert.id,
+            status="resolved",
+            notes=f"Source added to the AI-NIDS analysis blocklist ({network}); alert resolved by admin.",
+            user=user,
+        )
+
+    audit_service.record(
+        db,
+        action="network.block_added",
+        category=audit_service.CAT_NETWORK,
+        resource=network,
+        user=user,
+        request=request,
+        new_value=rule.to_dict(),
+        detail={
+            "alert_id": alert.id if alert else None,
+            "enforcement": "analysis_label_only",
+        },
+    )
+    db.commit()
+    db.refresh(rule)
+    return {
+        "rule": rule.to_dict(),
+        "alert": alert.to_dict() if alert else None,
+        "enforcement": "analysis_label_only",
+    }
+
+
+@router.delete("/network/blocks/{rule_id}", summary="Release an IP/CIDR analysis policy")
+def release_network_block(
+    rule_id: str,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rule = db.get(NetworkBlockRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Blocklist policy not found.")
+    if not rule.active:
+        raise HTTPException(status_code=409, detail="This blocklist policy is already released.")
+
+    previous = rule.to_dict()
+    rule.active = False
+    rule.released_at = datetime.now(timezone.utc)
+    rule.released_by = user.id
+    audit_service.record(
+        db,
+        action="network.block_released",
+        category=audit_service.CAT_NETWORK,
+        resource=rule.network,
+        user=user,
+        request=request,
+        previous_value=previous,
+        new_value=rule.to_dict(),
+    )
+    db.commit()
+    db.refresh(rule)
+    return {"rule": rule.to_dict(), "enforcement": "analysis_label_only"}
+
+
 @router.get("/network/status", summary="Current network status, indicators and history")
 def network_status(
     request: Request,

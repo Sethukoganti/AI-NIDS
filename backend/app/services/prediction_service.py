@@ -35,6 +35,7 @@ from app.services import (
     alert_service,
     config_service,
     investigation_service,
+    network_blocklist_service,
     notification_service,
     preprocessing_service,
     risk_service,
@@ -244,6 +245,7 @@ def run_analysis(
     top_factors = model_service.deviations(prepared.features.iloc[: min(len(prepared.features), 5000)], top=5)
 
     thresholds = runtime.risk_thresholds()
+    active_blocked_networks = network_blocklist_service.active_networks(db)
     records: list[dict] = []
     risk_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     attack_counts: dict[str, int] = {}
@@ -270,6 +272,7 @@ def run_analysis(
         rowwise_proba = probabilities[i] if probabilities.shape[0] > i else np.zeros(len(classes))
         order = np.argsort(rowwise_proba)[::-1][:3]
 
+        source_ip = _str_or_none(src_ips, i)
         records.append(
             {
                 "record_index": i,
@@ -284,7 +287,10 @@ def run_analysis(
                 ],
                 "source_port": _int_or_none(src_ports, i),
                 "destination_port": _int_or_none(dest_ports, i),
-                "source_ip": _str_or_none(src_ips, i),
+                "source_ip": source_ip,
+                "blocklist_network": network_blocklist_service.matching_network(
+                    source_ip, active_blocked_networks
+                ),
                 "destination_ip": _str_or_none(dst_ips, i),
                 "protocol": _str_or_none(protocols, i),
                 "flow_duration": _feature(matrix, index_of, "Flow Duration", i),
@@ -324,6 +330,7 @@ def run_analysis(
                 source_port=record["source_port"],
                 destination_port=record["destination_port"],
                 source_ip=record["source_ip"],
+                blocklist_network=record["blocklist_network"],
                 destination_ip=record["destination_ip"],
                 protocol=record["protocol"],
                 flow_duration=record["flow_duration"],
