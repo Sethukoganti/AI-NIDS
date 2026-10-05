@@ -148,3 +148,8 @@ def create_user(
 def list_users(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     rows = db.scalars(select(User).order_by(User.created_at.asc())).all()
     return {"items": [u.to_public_dict() for u in rows], "total": len(rows)}
+
+
+@router.get("/permissions", tags=["auth"], summary="Permission matrix")
+def get_permissions():
+    return rbac.permission_matrix()

@@ -529,7 +529,7 @@ def update_user(
         if not payload.is_active:
             target.last_login_at = None
     if payload.password:
-        target.hashed_password = hash_password(payload.password)
+        target.password_hash = hash_password(payload.password)
         changes["password"] = {"previous": None, "new": "reset"}
         # Invalidate every session that predates the reset: get_current_user
         # refuses tokens issued before access_reset_at.
@@ -580,7 +580,7 @@ def delete_user(
 
     email = target.email
     target.is_active = False
-    target.token_version = int(target.token_version or 1) + 1
+    target.access_reset_at = datetime.now(timezone.utc)  # invalidate sessions
     audit_service.record(
         db,
         action="user.deactivated",
