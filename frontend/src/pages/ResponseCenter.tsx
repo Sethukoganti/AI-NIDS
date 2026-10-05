@@ -40,6 +40,7 @@ interface RecommendedActionItem {
   attackType: string
   severity: RiskLevel
   confidence: number
+  sourceIp?: string | null
   targetPort?: number | null
   recommendedAction: string
   status: 'recommended' | 'approved' | 'executed' | 'failed'
@@ -47,6 +48,19 @@ interface RecommendedActionItem {
   requiresApproval: boolean
   description: string
   timestamp: string
+}
+
+interface MerakiBlock {
+  ip: string
+  comment: string
+}
+
+interface MerakiBlockStatus {
+  configured: boolean
+  integration: string
+  network_id: string | null
+  missing_configuration: string[]
+  items: MerakiBlock[]
 }
 
 export function ResponseCenter() {
@@ -61,6 +75,10 @@ export function ResponseCenter() {
   const [selectedAction, setSelectedAction] = useState<RecommendedActionItem | null>(null)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [actionStatusFilter, setActionStatusFilter] = useState('all')
+  const [merakiStatus, setMerakiStatus] = useState<MerakiBlockStatus | null>(null)
+  const [merakiLoading, setMerakiLoading] = useState(false)
+  const [merakiError, setMerakiError] = useState<string | null>(null)
+  const [newBlockIp, setNewBlockIp] = useState('')
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -97,6 +115,7 @@ export function ResponseCenter() {
           attackType: a.attack_type,
           severity: a.severity,
           confidence: a.confidence,
+          sourceIp: a.source_ip,
           targetPort: a.destination_port,
           recommendedAction: recommendation,
           status: a.status === 'reviewed' ? 'approved' : a.status === 'resolved' ? 'executed' : 'recommended',
@@ -116,9 +135,72 @@ export function ResponseCenter() {
     }
   }, [])
 
+  const loadMerakiBlocks = useCallback(async () => {
+    if (!isAdmin) return
+    setMerakiLoading(true)
+    setMerakiError(null)
+    try {
+      const status = await api.get<MerakiBlockStatus>('/admin/network/blocked-ips')
+      setMerakiStatus(status)
+    } catch (err) {
+      setMerakiError(errorMessage(err))
+    } finally {
+      setMerakiLoading(false)
+    }
+  }, [isAdmin])
+
   useEffect(() => {
     loadData()
-  }, [loadData])
+    loadMerakiBlocks()
+  }, [loadData, loadMerakiBlocks])
+
+  const blockSourceIp = async (ip: string, reason: string) => {
+    if (!window.confirm(
+      `Block ${ip} at the configured Meraki MX firewall? This applies regardless of AI-NIDS network status.`,
+    )) return
+    try {
+      const result = await api.post<{ changed: boolean; message: string }>('/admin/network/blocked-ips', {
+        ip,
+        reason,
+        confirm: true,
+      })
+      setActionNotice(result.message)
+      setNewBlockIp('')
+      await loadMerakiBlocks()
+    } catch (err) {
+      setMerakiError(errorMessage(err))
+    }
+  }
+
+  const unblockSourceIp = async (ip: string) => {
+    if (!window.confirm(`Remove only the AI-NIDS-managed firewall block for ${ip}?`)) return
+    try {
+      const result = await api.post<{ changed: boolean; message: string }>(
+        '/admin/network/blocked-ips/remove',
+        { ip, reason: 'Admin explicitly approved removal of this managed IP block.', confirm: true },
+      )
+      setActionNotice(result.message)
+      await loadMerakiBlocks()
+    } catch (err) {
+      setMerakiError(errorMessage(err))
+    }
+  }
+
+  const clearManagedBlocks = async () => {
+    if (!window.confirm(
+      'Remove every AI-NIDS-managed source-IP block from the configured Meraki firewall? Other firewall rules will be preserved.',
+    )) return
+    try {
+      const result = await api.post<{ removed: number; message: string }>(
+        '/admin/network/blocked-ips/clear',
+        { reason: 'Admin explicitly approved clearing all AI-NIDS-managed IP blocks.', confirm: true },
+      )
+      setActionNotice(`${result.message} (${result.removed} block(s) removed.)`)
+      await loadMerakiBlocks()
+    } catch (err) {
+      setMerakiError(errorMessage(err))
+    }
+  }
 
   const handleExecuteAction = async (action: RecommendedActionItem) => {
     try {
@@ -246,6 +328,7 @@ export function ResponseCenter() {
           <TabsTrigger value="queue">Response Action Queue</TabsTrigger>
           <TabsTrigger value="policy">Admin Response Policies</TabsTrigger>
           <TabsTrigger value="integrations">Security Integrations</TabsTrigger>
+          {isAdmin && <TabsTrigger value="source-ip-blocks">Source IP Blocks</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="queue">
@@ -289,6 +372,7 @@ export function ResponseCenter() {
                         <TableHead>Action ID</TableHead>
                         <TableHead>Attack Family</TableHead>
                         <TableHead>Severity</TableHead>
+                        <TableHead>Source IP</TableHead>
                         <TableHead>Target Port</TableHead>
                         <TableHead>Recommended Mitigation</TableHead>
                         <TableHead>Status</TableHead>
@@ -303,6 +387,9 @@ export function ResponseCenter() {
                           <TableCell className="text-xs font-medium text-foreground">{act.attackType}</TableCell>
                           <TableCell>
                             <RiskBadge level={act.severity} />
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {act.sourceIp ?? 'Not available'}
                           </TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">
                             {act.targetPort ? `Port ${act.targetPort}` : 'All'}
@@ -343,6 +430,22 @@ export function ResponseCenter() {
                                 <Download className="h-3 w-3" />
                               </Button>
 
+                              {isAdmin && act.sourceIp && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() =>
+                                    blockSourceIp(
+                                      act.sourceIp!,
+                                      `Admin-approved block from alert ${action.alertId}: ${action.attackType} (${action.severity}).`,
+                                    )
+                                  }
+                                >
+                                  Block IP
+                                </Button>
+                              )}
+
                               {act.status === 'recommended' && (
                                 <Button
                                   variant="default"
@@ -374,6 +477,108 @@ export function ResponseCenter() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="source-ip-blocks">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-semibold">Cisco Meraki source-IP blocks</CardTitle>
+                <CardDescription className="text-xs">
+                  Admin-approved blocks apply at the configured Meraki MX regardless of whether AI-NIDS
+                  reports NORMAL, elevated, or critical status. Blocking changes real network traffic.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {merakiError && (
+                  <InlineAlert variant="error" title="Meraki firewall operation failed">
+                    {merakiError}
+                  </InlineAlert>
+                )}
+                {!merakiStatus ? (
+                  <Loading label="Checking Meraki integration..." />
+                ) : !merakiStatus.configured ? (
+                  <InlineAlert variant="info" title="Meraki integration is not configured">
+                    Set {merakiStatus.missing_configuration.join(' and ')} in the backend environment
+                    (or Docker Compose .env), then restart the backend. The API key stays server-side.
+                  </InlineAlert>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 p-3 text-xs">
+                      <span>
+                        Connected to Meraki network <span className="font-mono">{merakiStatus.network_id}</span>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={clearManagedBlocks}
+                        disabled={merakiLoading || merakiStatus.items.length === 0}
+                      >
+                        Remove all managed blocks
+                      </Button>
+                    </div>
+
+                    <form
+                      className="flex flex-col gap-2 sm:flex-row"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        if (newBlockIp.trim()) {
+                          void blockSourceIp(newBlockIp.trim(), 'Admin-approved manual source-IP block.')
+                        }
+                      }}
+                    >
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={newBlockIp}
+                        onChange={(event) => setNewBlockIp(event.target.value)}
+                        placeholder="IPv4 address, e.g. 198.51.100.25"
+                        aria-label="IPv4 address to block"
+                        required
+                      />
+                      <Button type="submit" variant="destructive" disabled={merakiLoading}>
+                        Block IP
+                      </Button>
+                    </form>
+
+                    {merakiLoading ? (
+                      <Loading label="Loading managed firewall blocks..." />
+                    ) : merakiStatus.items.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No AI-NIDS-managed IP blocks are present.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Blocked source IP</TableHead>
+                            <TableHead>Meraki rule</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {merakiStatus.items.map((item) => (
+                            <TableRow key={item.ip}>
+                              <TableCell className="font-mono text-xs">{item.ip}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">{item.comment}</TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={merakiLoading}
+                                  onClick={() => unblockSourceIp(item.ip)}
+                                >
+                                  Unblock
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         <TabsContent value="policy">
           <Card>

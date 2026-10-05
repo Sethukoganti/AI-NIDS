@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     AI_TIMEOUT_SECONDS: float = 30.0
     AI_MAX_TOKENS: int = 700
 
+    # --------------------------------------------------- Meraki enforcement --
+    # Optional; source-IP blocks are only pushed after an admin confirms.
+    MERAKI_API_KEY: str = ""
+    MERAKI_NETWORK_ID: str = ""
+
     # ----------------------------------------------------------- demo data ---
     SEED_DEMO_DATA: bool = True
     DEMO_USER_EMAIL: str = "analyst@ainids.dev"

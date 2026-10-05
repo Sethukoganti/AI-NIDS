@@ -1,0 +1,1 @@
+- [AI-NIDS Upgrade Complete](ai-nids-upgrade-completion.md) — master upgrade 2026-10-05

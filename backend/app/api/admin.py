@@ -51,6 +51,8 @@ from app.models.schemas import (
     AuditLogPage,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
+    MerakiIpBlockClearRequest,
+    MerakiIpBlockRequest,
     ModelDeployRequest,
     NetworkStatusChangeRequest,
     NotificationPage,
@@ -63,6 +65,7 @@ from app.services import (
     config_service,
     dataset_service,
     investigation_service,
+    meraki_service,
     network_status_service,
     notification_service,
     prediction_service,
@@ -391,6 +394,136 @@ def network_status_history(
     db: Session = Depends(get_db),
 ):
     return {"items": network_status_service.history(db, limit=limit)}
+
+
+@router.get("/network/blocked-ips", summary="List AI-NIDS-managed Meraki source-IP blocks")
+def list_network_blocked_ips(
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+):
+    integration = meraki_service.integration_status()
+    if not integration["configured"]:
+        return {**integration, "items": []}
+    try:
+        return {**integration, "items": meraki_service.list_blocked_ips()}
+    except meraki_service.MerakiIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/network/blocked-ips", summary="Block one source IP in Meraki")
+def block_network_ip(
+    payload: MerakiIpBlockRequest,
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail="Blocking an IP changes the live Meraki firewall. Explicit admin confirmation is required.",
+        )
+    if not meraki_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Cisco Meraki integration is not configured. Set MERAKI_API_KEY and "
+            "MERAKI_NETWORK_ID on the backend, then restart it.",
+        )
+    try:
+        result = meraki_service.block_ip(payload.ip)
+    except meraki_service.MerakiIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    audit_service.record(
+        db,
+        action="network.source_ip_blocked",
+        user=user,
+        request=request,
+        category=audit_service.CAT_NETWORK,
+        resource=f"meraki_source_ip:{payload.ip}",
+        new_value={"ip": payload.ip, "changed": result["changed"]},
+        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+    )
+    db.commit()
+    return {
+        **result,
+        "message": "Meraki firewall policy updated."
+        if result["changed"]
+        else "IP was already blocked.",
+    }
+
+
+@router.post("/network/blocked-ips/remove", summary="Unblock one AI-NIDS-managed Meraki source IP")
+def unblock_network_ip(
+    payload: MerakiIpBlockRequest,
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail="Removing a firewall block changes the live Meraki policy. Explicit admin confirmation is required.",
+        )
+    if not meraki_service.is_configured():
+        raise HTTPException(status_code=503, detail="Cisco Meraki integration is not configured.")
+    try:
+        result = meraki_service.unblock_ip(payload.ip)
+    except meraki_service.MerakiIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    audit_service.record(
+        db,
+        action="network.source_ip_unblocked",
+        user=user,
+        request=request,
+        category=audit_service.CAT_NETWORK,
+        resource=f"meraki_source_ip:{payload.ip}",
+        previous_value={"ip": payload.ip, "managed_block_removed": result["changed"]},
+        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+    )
+    db.commit()
+    return {
+        **result,
+        "message": "Managed block removed."
+        if result["changed"]
+        else "No AI-NIDS-managed block existed for this IP.",
+    }
+
+
+@router.post("/network/blocked-ips/clear", summary="Remove all AI-NIDS-managed Meraki blocks")
+def clear_network_blocked_ips(
+    payload: MerakiIpBlockClearRequest,
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail="Clearing managed blocks changes the live Meraki policy. Explicit admin confirmation is required.",
+        )
+    if not meraki_service.is_configured():
+        raise HTTPException(status_code=503, detail="Cisco Meraki integration is not configured.")
+    try:
+        result = meraki_service.clear_managed_blocks()
+    except meraki_service.MerakiIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    audit_service.record(
+        db,
+        action="network.source_ip_blocks_cleared",
+        user=user,
+        request=request,
+        category=audit_service.CAT_NETWORK,
+        resource="meraki_source_ip_blocks",
+        previous_value={"removed_count": result["removed"]},
+        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+    )
+    db.commit()
+    return {
+        **result,
+        "message": "AI-NIDS-managed blocks cleared; other Meraki rules were preserved.",
+    }
 
 
 # --------------------------------------------------------------------------- #

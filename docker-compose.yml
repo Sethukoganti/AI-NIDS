@@ -91,6 +91,10 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
 
+      # Optional Cisco Meraki MX source-IP firewall enforcement
+      MERAKI_API_KEY: ${MERAKI_API_KEY:-}
+      MERAKI_NETWORK_ID: ${MERAKI_NETWORK_ID:-}
+
       # Seed the demo analyst/admin accounts + bootstrap analysis on first boot
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-analyst@ainids.dev}
