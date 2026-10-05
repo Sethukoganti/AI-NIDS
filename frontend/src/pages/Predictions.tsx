@@ -24,7 +24,7 @@ export function Predictions() {
   const [params, setParams] = useSearchParams()
   const jobId = params.get('job') ?? undefined
 
-  const [verdict, setVerdict] = useState(params.get('verdict') ?? 'attack')
+  const [verdict, setVerdict] = useState(params.get('verdict') ?? 'all')
   const [risk, setRisk] = useState('all')
   const [attackType, setAttackType] = useState('all')
   const [minConfidence, setMinConfidence] = useState('')

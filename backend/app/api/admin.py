@@ -51,8 +51,8 @@ from app.models.schemas import (
     AuditLogPage,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
-    MerakiIpBlockClearRequest,
-    MerakiIpBlockRequest,
+    DemoIpRuleClearRequest,
+    DemoIpRuleRequest,
     ModelDeployRequest,
     NetworkStatusChangeRequest,
     NotificationPage,
@@ -64,8 +64,8 @@ from app.services import (
     audit_service,
     config_service,
     dataset_service,
+    demo_ip_rule_service,
     investigation_service,
-    meraki_service,
     network_status_service,
     notification_service,
     prediction_service,
@@ -396,23 +396,25 @@ def network_status_history(
     return {"items": network_status_service.history(db, limit=limit)}
 
 
-@router.get("/network/blocked-ips", summary="List AI-NIDS-managed Meraki source-IP blocks")
+@router.get("/network/blocked-ips", summary="List simulated source-IP firewall rules")
 def list_network_blocked_ips(
     request: Request,
     user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
 ):
-    integration = meraki_service.integration_status()
-    if not integration["configured"]:
-        return {**integration, "items": []}
-    try:
-        return {**integration, "items": meraki_service.list_blocked_ips()}
-    except meraki_service.MerakiIntegrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "configured": True,
+        "mode": "simulation",
+        "integration": "AI-NIDS demo firewall (simulation only)",
+        "network_id": None,
+        "missing_configuration": [],
+        "items": demo_ip_rule_service.list_rules(db),
+    }
 
 
-@router.post("/network/blocked-ips", summary="Block one source IP in Meraki")
+@router.post("/network/blocked-ips", summary="Add a simulated source-IP deny rule")
 def block_network_ip(
-    payload: MerakiIpBlockRequest,
+    payload: DemoIpRuleRequest,
     request: Request,
     user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
     db: Session = Depends(get_db),
@@ -420,41 +422,82 @@ def block_network_ip(
     if not payload.confirm:
         raise HTTPException(
             status_code=428,
-            detail="Blocking an IP changes the live Meraki firewall. Explicit admin confirmation is required.",
-        )
-    if not meraki_service.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Cisco Meraki integration is not configured. Set MERAKI_API_KEY and "
-            "MERAKI_NETWORK_ID on the backend, then restart it.",
+            detail="Adding a simulated IP block requires explicit admin confirmation.",
         )
     try:
-        result = meraki_service.block_ip(payload.ip)
-    except meraki_service.MerakiIntegrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        rule, changed = demo_ip_rule_service.set_rule(
+            db, payload.ip, "deny", payload.reason, user=user
+        )
+    except demo_ip_rule_service.DemoIpRuleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     audit_service.record(
         db,
-        action="network.source_ip_blocked",
+        action="network.demo_source_ip_blocked",
         user=user,
         request=request,
         category=audit_service.CAT_NETWORK,
-        resource=f"meraki_source_ip:{payload.ip}",
-        new_value={"ip": payload.ip, "changed": result["changed"]},
-        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+        resource=f"demo_source_ip:{rule['ip']}",
+        new_value={"ip": rule["ip"], "policy": "deny", "changed": changed},
+        detail={"reason": payload.reason, "mode": "simulation", "live_firewall_changed": False},
     )
     db.commit()
     return {
-        **result,
-        "message": "Meraki firewall policy updated."
-        if result["changed"]
-        else "IP was already blocked.",
+        **rule,
+        "changed": changed,
+        "message": "Simulated block saved; no real firewall was changed."
+        if changed
+        else "That IP is already simulated as blocked.",
     }
 
 
-@router.post("/network/blocked-ips/remove", summary="Unblock one AI-NIDS-managed Meraki source IP")
+@router.post("/network/allowed-ips", summary="Add a simulated source-IP allow rule")
+def allow_network_ip(
+    payload: DemoIpRuleRequest,
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail="Adding a simulated allow rule requires explicit admin confirmation.",
+        )
+    try:
+        rule, changed = demo_ip_rule_service.set_rule(
+            db, payload.ip, "allow", payload.reason, user=user
+        )
+    except demo_ip_rule_service.DemoIpRuleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    audit_service.record(
+        db,
+        action="network.demo_source_ip_allowed",
+        user=user,
+        request=request,
+        category=audit_service.CAT_NETWORK,
+        resource=f"demo_source_ip:{rule['ip']}",
+        new_value={"ip": rule["ip"], "changed": changed, "policy": "allow"},
+        detail={
+            "reason": payload.reason,
+            "mode": "simulation",
+            "live_firewall_changed": False,
+            "warning": "The simulated allow applies to all destinations and protocols.",
+        },
+    )
+    db.commit()
+    return {
+        **rule,
+        "changed": changed,
+        "message": "Simulated allow saved; no real firewall was changed."
+        if changed
+        else "That IP is already simulated as allowed.",
+    }
+
+
+@router.post("/network/blocked-ips/remove", summary="Remove a simulated source-IP deny rule")
 def unblock_network_ip(
-    payload: MerakiIpBlockRequest,
+    payload: DemoIpRuleRequest,
     request: Request,
     user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
     db: Session = Depends(get_db),
@@ -462,37 +505,38 @@ def unblock_network_ip(
     if not payload.confirm:
         raise HTTPException(
             status_code=428,
-            detail="Removing a firewall block changes the live Meraki policy. Explicit admin confirmation is required.",
+            detail="Removing a simulated IP block requires explicit admin confirmation.",
         )
-    if not meraki_service.is_configured():
-        raise HTTPException(status_code=503, detail="Cisco Meraki integration is not configured.")
     try:
-        result = meraki_service.unblock_ip(payload.ip)
-    except meraki_service.MerakiIntegrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        changed = demo_ip_rule_service.remove_rule(db, payload.ip, "deny")
+        ip = demo_ip_rule_service.normalize_ip(payload.ip)
+    except demo_ip_rule_service.DemoIpRuleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     audit_service.record(
         db,
-        action="network.source_ip_unblocked",
+        action="network.demo_source_ip_unblocked",
         user=user,
         request=request,
         category=audit_service.CAT_NETWORK,
-        resource=f"meraki_source_ip:{payload.ip}",
-        previous_value={"ip": payload.ip, "managed_block_removed": result["changed"]},
-        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+        resource=f"demo_source_ip:{ip}",
+        previous_value={"ip": ip, "simulated_block_removed": changed},
+        detail={"reason": payload.reason, "mode": "simulation", "live_firewall_changed": False},
     )
     db.commit()
     return {
-        **result,
-        "message": "Managed block removed."
-        if result["changed"]
-        else "No AI-NIDS-managed block existed for this IP.",
+        "ip": ip,
+        "policy": "deny",
+        "changed": changed,
+        "message": "Simulated block removed."
+        if changed
+        else "No simulated block existed for this IP.",
     }
 
 
-@router.post("/network/blocked-ips/clear", summary="Remove all AI-NIDS-managed Meraki blocks")
-def clear_network_blocked_ips(
-    payload: MerakiIpBlockClearRequest,
+@router.post("/network/allowed-ips/remove", summary="Remove a simulated source-IP allow rule")
+def remove_allowed_network_ip(
+    payload: DemoIpRuleRequest,
     request: Request,
     user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
     db: Session = Depends(get_db),
@@ -500,29 +544,63 @@ def clear_network_blocked_ips(
     if not payload.confirm:
         raise HTTPException(
             status_code=428,
-            detail="Clearing managed blocks changes the live Meraki policy. Explicit admin confirmation is required.",
+            detail="Removing a simulated allow rule requires explicit admin confirmation.",
         )
-    if not meraki_service.is_configured():
-        raise HTTPException(status_code=503, detail="Cisco Meraki integration is not configured.")
     try:
-        result = meraki_service.clear_managed_blocks()
-    except meraki_service.MerakiIntegrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        changed = demo_ip_rule_service.remove_rule(db, payload.ip, "allow")
+        ip = demo_ip_rule_service.normalize_ip(payload.ip)
+    except demo_ip_rule_service.DemoIpRuleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     audit_service.record(
         db,
-        action="network.source_ip_blocks_cleared",
+        action="network.demo_source_ip_allow_removed",
         user=user,
         request=request,
         category=audit_service.CAT_NETWORK,
-        resource="meraki_source_ip_blocks",
-        previous_value={"removed_count": result["removed"]},
-        detail={"reason": payload.reason, "integration": "Cisco Meraki MX"},
+        resource=f"demo_source_ip:{ip}",
+        previous_value={"ip": ip, "simulated_allow_removed": changed},
+        detail={"reason": payload.reason, "mode": "simulation", "live_firewall_changed": False},
     )
     db.commit()
     return {
-        **result,
-        "message": "AI-NIDS-managed blocks cleared; other Meraki rules were preserved.",
+        "ip": ip,
+        "policy": "allow",
+        "changed": changed,
+        "message": "Simulated allow rule removed."
+        if changed
+        else "No simulated allow rule existed for this IP.",
+    }
+
+
+@router.post("/network/blocked-ips/clear", summary="Clear simulated source-IP rules")
+def clear_network_blocked_ips(
+    payload: DemoIpRuleClearRequest,
+    request: Request,
+    user: User = Depends(require_permission(P_NETWORK_CONFIGURE)),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail="Clearing simulated IP rules requires explicit admin confirmation.",
+        )
+    removed = demo_ip_rule_service.clear_rules(db)
+
+    audit_service.record(
+        db,
+        action="network.demo_source_ip_rules_cleared",
+        user=user,
+        request=request,
+        category=audit_service.CAT_NETWORK,
+        resource="demo_source_ip_rules",
+        previous_value={"removed_count": removed},
+        detail={"reason": payload.reason, "mode": "simulation", "live_firewall_changed": False},
+    )
+    db.commit()
+    return {
+        "removed": removed,
+        "message": "Simulated IP rules cleared; no real firewall was changed.",
     }
 
 

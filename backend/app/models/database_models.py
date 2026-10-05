@@ -934,6 +934,30 @@ class NetworkStatusHistory(Base):
         }
 
 
+class DemoIpRule(Base, TimestampMixin):
+    """Persistent IP rules for the explicitly simulated demo firewall."""
+
+    __tablename__ = "demo_ip_rules"
+    __table_args__ = (UniqueConstraint("ip", name="uq_demo_ip_rules_ip"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    ip: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
+    policy: Mapped[str] = mapped_column(String(8), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "ip": self.ip,
+            "policy": self.policy,
+            "comment": self.reason,
+            "changed_by": self.changed_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 # --------------------------------------------------------------------------- #
 # Model lifecycle
 # --------------------------------------------------------------------------- #
@@ -1198,4 +1222,3 @@ def _duration_label_seconds(seconds: int | None) -> str:
     if secs or not parts:
         parts.append(f"{secs}s")
     return " ".join(parts[:3])
-

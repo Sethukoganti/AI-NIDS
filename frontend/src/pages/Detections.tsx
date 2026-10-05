@@ -30,7 +30,7 @@ export function Detections() {
     <>
       <PageHeader
         title="Detections"
-        subtitle="Every flow the Random Forest flagged, and the alert queue built from them. Open any row and press Why? to see the per-feature explanation."
+        subtitle="Browse all flows, including NORMAL, or filter to a risk level. Open any flow to inspect its evidence; admins can manage its source-IP firewall block from the detail view."
       />
       <HubTabs
         defaultTab="flows"

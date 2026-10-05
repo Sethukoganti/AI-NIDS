@@ -50,17 +50,19 @@ interface RecommendedActionItem {
   timestamp: string
 }
 
-interface MerakiBlock {
+interface DemoIpRule {
   ip: string
+  policy: 'allow' | 'deny'
   comment: string
 }
 
-interface MerakiBlockStatus {
+interface DemoIpRuleStatus {
   configured: boolean
+  mode: 'simulation'
   integration: string
-  network_id: string | null
-  missing_configuration: string[]
-  items: MerakiBlock[]
+  network_id: null
+  missing_configuration: []
+  items: DemoIpRule[]
 }
 
 export function ResponseCenter() {
@@ -75,7 +77,7 @@ export function ResponseCenter() {
   const [selectedAction, setSelectedAction] = useState<RecommendedActionItem | null>(null)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [actionStatusFilter, setActionStatusFilter] = useState('all')
-  const [merakiStatus, setMerakiStatus] = useState<MerakiBlockStatus | null>(null)
+  const [merakiStatus, setMerakiStatus] = useState<DemoIpRuleStatus | null>(null)
   const [merakiLoading, setMerakiLoading] = useState(false)
   const [merakiError, setMerakiError] = useState<string | null>(null)
   const [newBlockIp, setNewBlockIp] = useState('')
@@ -140,7 +142,7 @@ export function ResponseCenter() {
     setMerakiLoading(true)
     setMerakiError(null)
     try {
-      const status = await api.get<MerakiBlockStatus>('/admin/network/blocked-ips')
+      const status = await api.get<DemoIpRuleStatus>('/admin/network/blocked-ips')
       setMerakiStatus(status)
     } catch (err) {
       setMerakiError(errorMessage(err))
@@ -156,7 +158,7 @@ export function ResponseCenter() {
 
   const blockSourceIp = async (ip: string, reason: string) => {
     if (!window.confirm(
-      `Block ${ip} at the configured Meraki MX firewall? This applies regardless of AI-NIDS network status.`,
+      `Add a simulated block rule for ${ip}? This only changes AI-NIDS demo data and never affects a real network.`,
     )) return
     try {
       const result = await api.post<{ changed: boolean; message: string }>('/admin/network/blocked-ips', {
@@ -172,12 +174,16 @@ export function ResponseCenter() {
     }
   }
 
-  const unblockSourceIp = async (ip: string) => {
-    if (!window.confirm(`Remove only the AI-NIDS-managed firewall block for ${ip}?`)) return
+  const removeDemoRule = async (rule: DemoIpRule) => {
+    if (!window.confirm(`Remove the simulated ${rule.policy} rule for ${rule.ip}?`)) return
     try {
       const result = await api.post<{ changed: boolean; message: string }>(
-        '/admin/network/blocked-ips/remove',
-        { ip, reason: 'Admin explicitly approved removal of this managed IP block.', confirm: true },
+        `/admin/network/${rule.policy === 'allow' ? 'allowed-ips' : 'blocked-ips'}/remove`,
+        {
+          ip: rule.ip,
+          reason: 'Admin explicitly approved removal of this simulated IP rule.',
+          confirm: true,
+        },
       )
       setActionNotice(result.message)
       await loadMerakiBlocks()
@@ -188,14 +194,14 @@ export function ResponseCenter() {
 
   const clearManagedBlocks = async () => {
     if (!window.confirm(
-      'Remove every AI-NIDS-managed source-IP block from the configured Meraki firewall? Other firewall rules will be preserved.',
+      'Remove every simulated source-IP rule from AI-NIDS? No real firewall or network will be changed.',
     )) return
     try {
       const result = await api.post<{ removed: number; message: string }>(
         '/admin/network/blocked-ips/clear',
         { reason: 'Admin explicitly approved clearing all AI-NIDS-managed IP blocks.', confirm: true },
       )
-      setActionNotice(`${result.message} (${result.removed} block(s) removed.)`)
+      setActionNotice(`${result.message} (${result.removed} simulated rule(s) removed.)`)
       await loadMerakiBlocks()
     } catch (err) {
       setMerakiError(errorMessage(err))
@@ -291,7 +297,7 @@ export function ResponseCenter() {
           <span>Workflow Clarification: Detection vs. Investigation vs. Response</span>
         </div>
         <p className="leading-relaxed">
-          AI-NIDS does not automatically block traffic. When Cisco Meraki is configured, an admin can explicitly approve source-IP blocks in the firewall; other recommendations remain advisory.
+          AI-NIDS does not automatically block traffic. Admin IP rules are simulation-only records in this project and never change a real firewall or network; other recommendations remain advisory.
         </p>
       </div>
 
@@ -316,9 +322,9 @@ export function ResponseCenter() {
           icon={CheckCircle2}
         />
         <StatCard
-          title="Firewall Enforcement"
-          value={merakiStatus?.configured ? 'Meraki' : 'Advisory'}
-          hint={merakiStatus?.configured ? 'Admin-confirmed only' : 'No integration configured'}
+          title="IP Rule Mode"
+          value={merakiStatus?.mode === 'simulation' ? 'Simulation' : 'Loading'}
+          hint="Local demo data only"
           icon={Server}
         />
       </div>
@@ -541,21 +547,21 @@ export function ResponseCenter() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Terminal className="h-4 w-4 text-primary" />
-                Network Perimeter & Enforcement Integrations
+                Network Response Modes
               </CardTitle>
               <CardDescription className="text-xs">
-                Real-world network control status. Non-connected integrations operate in pure telemetry advisory mode.
+                AI-NIDS project controls and other response capabilities. Network rules in this project are simulated only.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <div className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-lg border border-border/80 p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-foreground">Cisco Meraki MX</span>
-                    <Badge variant="outline" className="text-[10px]">Admin Approved</Badge>
+                    <span className="font-medium text-foreground">AI-NIDS Demo IP Rules</span>
+                    <Badge variant="outline" className="text-[10px]">Simulation Only</Badge>
                   </div>
                   <p className="text-muted-foreground leading-relaxed">
-                    Configured Meraki networks support exact IPv4 source blocks after explicit admin confirmation. Without backend credentials, firewall actions remain unavailable.
+                    Admins can add, allow, block, or remove individual IPv4 rules for any detection risk. Rules are stored in AI-NIDS only; no API key or network ID is required and no real network is changed.
                   </p>
                 </div>
 
@@ -587,38 +593,35 @@ export function ResponseCenter() {
           <TabsContent value="source-ip-blocks">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-semibold">Cisco Meraki source-IP blocks</CardTitle>
+                <CardTitle className="text-sm font-semibold">Demo firewall IP rules</CardTitle>
                 <CardDescription className="text-xs">
-                  Admin-approved blocks apply at the configured Meraki MX regardless of whether AI-NIDS
-                  reports NORMAL, elevated, or critical status. Blocking changes real network traffic.
+                  Simulation only. These rules are saved for the project demonstration and do not affect a
+                  real firewall or network. You can manage rules for any risk level.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {merakiError && (
-                  <InlineAlert variant="error" title="Meraki firewall operation failed">
+                  <InlineAlert variant="error" title="Demo IP rule operation failed">
                     {merakiError}
                   </InlineAlert>
                 )}
                 {!merakiStatus ? (
-                  <Loading label="Checking Meraki integration..." />
+                  <Loading label="Loading demo IP rules..." />
                 ) : !merakiStatus.configured ? (
-                  <InlineAlert variant="info" title="Meraki integration is not configured">
-                    Set {merakiStatus.missing_configuration.join(' and ')} in the backend environment
-                    (or Docker Compose .env), then restart the backend. The API key stays server-side.
+                  <InlineAlert variant="error" title="Demo IP rule storage is unavailable">
+                    The simulation service could not be loaded.
                   </InlineAlert>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 p-3 text-xs">
-                      <span>
-                        Connected to Meraki network <span className="font-mono">{merakiStatus.network_id}</span>
-                      </span>
+                      <span>Simulation only · no real firewall changes</span>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={clearManagedBlocks}
                         disabled={merakiLoading || merakiStatus.items.length === 0}
                       >
-                        Remove all managed blocks
+                        Remove all simulated IP rules
                       </Button>
                     </div>
 
@@ -633,7 +636,6 @@ export function ResponseCenter() {
                     >
                       <Input
                         type="text"
-                        inputMode="numeric"
                         value={newBlockIp}
                         onChange={(event) => setNewBlockIp(event.target.value)}
                         placeholder="IPv4 address, e.g. 198.51.100.25"
@@ -641,20 +643,21 @@ export function ResponseCenter() {
                         required
                       />
                       <Button type="submit" variant="destructive" disabled={merakiLoading}>
-                        Block IP
+                        Simulate block
                       </Button>
                     </form>
 
                     {merakiLoading ? (
-                      <Loading label="Loading managed firewall blocks..." />
+                      <Loading label="Loading simulated IP rules..." />
                     ) : merakiStatus.items.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No AI-NIDS-managed IP blocks are present.</p>
+                      <p className="text-xs text-muted-foreground">No simulated IP rules are present.</p>
                     ) : (
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Blocked source IP</TableHead>
-                            <TableHead>Meraki rule</TableHead>
+                            <TableHead>Source IP</TableHead>
+                            <TableHead>Policy</TableHead>
+                            <TableHead>Reason</TableHead>
                             <TableHead className="text-right">Action</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -662,15 +665,20 @@ export function ResponseCenter() {
                           {merakiStatus.items.map((item) => (
                             <TableRow key={item.ip}>
                               <TableCell className="font-mono text-xs">{item.ip}</TableCell>
+                              <TableCell>
+                                <Badge variant={item.policy === 'deny' ? 'destructive' : 'outline'}>
+                                  {item.policy}
+                                </Badge>
+                              </TableCell>
                               <TableCell className="text-xs text-muted-foreground">{item.comment}</TableCell>
                               <TableCell className="text-right">
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   disabled={merakiLoading}
-                                  onClick={() => unblockSourceIp(item.ip)}
+                                  onClick={() => removeDemoRule(item)}
                                 >
-                                  Unblock
+                                  Remove rule
                                 </Button>
                               </TableCell>
                             </TableRow>

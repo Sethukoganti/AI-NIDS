@@ -279,7 +279,7 @@ class NetworkStatusChangeRequest(BaseModel):
     confirm: bool = False
 
 
-class MerakiIpBlockRequest(BaseModel):
+class DemoIpRuleRequest(BaseModel):
     ip: str = Field(min_length=1, max_length=45)
     reason: str = Field(min_length=5, max_length=500)
     confirm: bool = False
@@ -294,11 +294,11 @@ class MerakiIpBlockRequest(BaseModel):
         except ValueError as exc:
             raise ValueError("Enter one valid IPv4 address (CIDR ranges are not accepted).") from exc
         if address.version != 4:
-            raise ValueError("Only individual IPv4 addresses are supported by this integration.")
+            raise ValueError("Only individual IPv4 addresses are supported by demo rules.")
         return address.compressed
 
 
-class MerakiIpBlockClearRequest(BaseModel):
+class DemoIpRuleClearRequest(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
     confirm: bool = False
 

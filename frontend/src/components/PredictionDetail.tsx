@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Brain, Compass, Info, Loader2, Sparkles, Wand2 } from 'lucide-react'
+import { AlertTriangle, Brain, Compass, Info, Loader2, LockKeyhole, ShieldOff, Sparkles, Wand2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -9,13 +9,23 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import { Alert, KeyValue, RiskBadge, VerdictBadge } from '@/components/common'
 import { ShapWaterfall } from '@/components/charts/Charts'
 import { api, errorMessage } from '@/lib/api'
 import { formatNumber, formatPercent, relativeTime } from '@/lib/format'
+import { useAuth } from '@/context/AuthContext'
 import type { ExplanationResponse, Prediction } from '@/lib/types'
+
+interface MerakiBlockStatus {
+  configured: boolean
+  integration: string
+  network_id: string | null
+  missing_configuration: string[]
+  items: { ip: string; policy: 'allow' | 'deny'; comment: string }[]
+}
 
 export function PredictionDetailDialog({
   predictionId,
@@ -24,18 +34,28 @@ export function PredictionDetailDialog({
   predictionId: string | null
   onClose: () => void
 }) {
+  const { isAdmin } = useAuth()
   const [detail, setDetail] = useState<Prediction | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [explanation, setExplanation] = useState<ExplanationResponse | null>(null)
   const [explaining, setExplaining] = useState(false)
   const [explainError, setExplainError] = useState<string | null>(null)
+  const [merakiStatus, setMerakiStatus] = useState<MerakiBlockStatus | null>(null)
+  const [merakiError, setMerakiError] = useState<string | null>(null)
+  const [merakiBusy, setMerakiBusy] = useState(false)
+  const [merakiNotice, setMerakiNotice] = useState<string | null>(null)
+  const [ipToManage, setIpToManage] = useState('')
 
   useEffect(() => {
     if (!predictionId) {
       setDetail(null)
       setExplanation(null)
       setExplainError(null)
+      setMerakiStatus(null)
+      setMerakiError(null)
+      setMerakiNotice(null)
+      setIpToManage('')
       return
     }
     let cancelled = false
@@ -44,7 +64,10 @@ export function PredictionDetailDialog({
     ;(async () => {
       try {
         const data = await api.get<Prediction>(`/predictions/${predictionId}?with_shap=true`)
-        if (!cancelled) setDetail(data)
+        if (!cancelled) {
+          setDetail(data)
+          setIpToManage(data.source_ip ?? '')
+        }
       } catch (err) {
         if (!cancelled) setError(errorMessage(err))
       } finally {
@@ -55,6 +78,71 @@ export function PredictionDetailDialog({
       cancelled = true
     }
   }, [predictionId])
+
+  useEffect(() => {
+    if (!predictionId || !isAdmin) {
+      setMerakiStatus(null)
+      return
+    }
+    let cancelled = false
+    api.get<MerakiBlockStatus>('/admin/network/blocked-ips')
+      .then((status) => {
+        if (!cancelled) {
+          setMerakiStatus(status)
+          setMerakiError(null)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setMerakiError(errorMessage(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [predictionId, isAdmin])
+
+  const changeIpPolicy = async (action: 'block' | 'allow' | 'remove-block' | 'remove-allow') => {
+    const ip = ipToManage.trim()
+    if (!ip) {
+      setMerakiError('Enter an IPv4 address to manage.')
+      return
+    }
+    const prompt = action === 'block'
+      ? `Add a simulated block rule for ${ip}? This only changes AI-NIDS demo data and never affects a real network.`
+      : action === 'allow'
+        ? `Add a simulated allow rule for ${ip}? This only changes AI-NIDS demo data and never affects a real network.`
+        : action === 'remove-block'
+          ? `Remove the simulated block rule for ${ip}?`
+          : `Remove the simulated allow rule for ${ip}?`
+    if (!window.confirm(prompt)) return
+
+    setMerakiBusy(true)
+    setMerakiError(null)
+    setMerakiNotice(null)
+    try {
+      const routes = {
+        block: '/admin/network/blocked-ips',
+        allow: '/admin/network/allowed-ips',
+        'remove-block': '/admin/network/blocked-ips/remove',
+        'remove-allow': '/admin/network/allowed-ips/remove',
+      }
+      const result = await api.post<{ message: string }>(
+        routes[action],
+        {
+          ip,
+          reason: `Admin-approved ${action} for ${detail?.risk_level ?? 'manual'} IP ${ip}${detail ? ` from flow ${detail.id}` : ''}.`,
+          confirm: true,
+        },
+      )
+      setMerakiError(null)
+      const status = await api.get<MerakiBlockStatus>('/admin/network/blocked-ips')
+      setMerakiStatus(status)
+      setMerakiNotice(result.message)
+    } catch (err) {
+      setMerakiError(errorMessage(err))
+    } finally {
+      setMerakiBusy(false)
+    }
+  }
 
   const requestExplanation = async (forceLocal: boolean) => {
     if (!predictionId) return
@@ -75,6 +163,7 @@ export function PredictionDetailDialog({
   const shap = detail?.explanation
   const factors = detail?.top_factors ?? []
   const features = detail?.features ?? {}
+  const selectedIpPolicy = merakiStatus?.items.find((item) => item.ip === ipToManage.trim())?.policy
 
   return (
     <Dialog open={Boolean(predictionId)} onOpenChange={(open) => !open && onClose()}>
@@ -141,6 +230,105 @@ export function PredictionDetailDialog({
                   </p>
                 </div>
               </div>
+
+              {isAdmin && (
+                <div className="space-y-3 rounded-lg border border-border/70 bg-background/40 p-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <LockKeyhole className="h-4 w-4 text-primary" />
+                      Simulated IP access controls
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Demo mode only: changes are saved in AI-NIDS for your project demonstration. They do not
+                      affect any real device, firewall, or network. Controls are available for all risk levels.
+                    </p>
+                  </div>
+
+                  {merakiError ? (
+                    <Alert variant="error" title="Could not load or change simulated IP rules">
+                      {merakiError}
+                    </Alert>
+                  ) : !merakiStatus ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading demo rules…
+                    </div>
+                  ) : !merakiStatus.configured ? (
+                    <Alert variant="info" title="Demo IP rule storage is unavailable">
+                      The simulation service could not be loaded.
+                    </Alert>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Input
+                          value={ipToManage}
+                          onChange={(event) => {
+                            setIpToManage(event.target.value)
+                            setMerakiError(null)
+                            setMerakiNotice(null)
+                          }}
+                          placeholder={detail.source_ip ?? 'Enter an IPv4 address'}
+                          aria-label="Source IP to manage"
+                          autoComplete="off"
+                        />
+                        <span className="self-center text-[10px] text-muted-foreground">
+                          {detail.source_ip ? 'Prefilled from this detection; editable' : 'No IP was recorded; enter one manually'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={merakiBusy || !ipToManage.trim()}
+                          onClick={() => changeIpPolicy('block')}
+                        >
+                          <LockKeyhole className="h-3.5 w-3.5" />
+                          Block IP
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={merakiBusy || !ipToManage.trim()}
+                          onClick={() => changeIpPolicy('allow')}
+                        >
+                          Allow all traffic
+                        </Button>
+                        {selectedIpPolicy === 'deny' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={merakiBusy}
+                            onClick={() => changeIpPolicy('remove-block')}
+                          >
+                            <ShieldOff className="h-3.5 w-3.5" />
+                            Remove block
+                          </Button>
+                        )}
+                        {selectedIpPolicy === 'allow' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={merakiBusy}
+                            onClick={() => changeIpPolicy('remove-allow')}
+                          >
+                            <ShieldOff className="h-3.5 w-3.5" />
+                            Remove allow rule
+                          </Button>
+                        )}
+                        {merakiBusy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                      </div>
+                      <Alert variant="warn" title="Allow rule scope">
+                        Allow creates a simulated broad rule for all protocols and destinations from this IP.
+                        A chosen allow or block replaces the existing simulated rule for that address.
+                      </Alert>
+                    </div>
+                  )}
+
+                  {merakiNotice && (
+                    <div className="text-xs text-emerald-600" role="status">{merakiNotice}</div>
+                  )}
+                </div>
+              )}
 
               <div className="rounded-lg border border-border/70 bg-background/40 p-3">
                 <div className="space-y-0.5">
