@@ -93,6 +93,27 @@ rid=730868f974a5 GET /api/health/system -> 200 in 11.4ms user=<id> ip=<ip>
    `job <id>: M alert(s) … across K attack/port pair(s)` log line before assuming a model problem.
    One alert per pair is expected: `M == K` unless the 300-pair ceiling kicked in.
 
+## Admin-approved Meraki source-IP blocks
+
+The optional Cisco Meraki MX integration can install exact IPv4 source-deny rules after an admin
+explicitly approves the action in **Response Center → Source IP Blocks**. Configure
+`MERAKI_API_KEY` and `MERAKI_NETWORK_ID` in the backend environment (or the root `.env` used by
+Docker Compose), then restart the backend. Use a least-privilege Meraki API key with access to read
+and update the selected network's appliance L3 firewall policy; the key is only read by the
+backend and is never returned to the browser.
+
+The feature is disabled until both values are configured. It does not block automatically when an
+alert is raised, and it does not depend on AI-NIDS's operational status: a confirmed block applies
+at the selected Meraki network whether AI-NIDS currently reports NORMAL, elevated, or critical
+status. Use the alert queue's **Block IP** action or enter one individual IPv4 address. CIDRs and
+IPv6 addresses are rejected.
+
+Unblock an individual address or use **Remove all managed blocks** to clear rules created by this
+integration. Clearing removes only `AI-NIDS managed source-IP block:` rules and preserves other
+Meraki firewall rules. Since Meraki's policy update replaces the rules list, coordinate policy
+changes with other firewall administrators and verify the live Meraki policy after each change.
+All requests require the `network.configure` permission and are recorded in the audit log.
+
 ## Upgrade procedure
 
 ```bash

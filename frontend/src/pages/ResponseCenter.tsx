@@ -291,7 +291,7 @@ export function ResponseCenter() {
           <span>Workflow Clarification: Detection vs. Investigation vs. Response</span>
         </div>
         <p className="leading-relaxed">
-          AI-NIDS functions as a defensive detection and analysis system. To prevent unauthorized or destructive network interference, the system generates <strong>RECOMMENDED ACTIONS</strong>. Active mitigations require deliberate operator confirmation and actual downstream network/firewall integration rather than simulated blocking.
+          AI-NIDS does not automatically block traffic. When Cisco Meraki is configured, an admin can explicitly approve source-IP blocks in the firewall; other recommendations remain advisory.
         </p>
       </div>
 
@@ -316,9 +316,9 @@ export function ResponseCenter() {
           icon={CheckCircle2}
         />
         <StatCard
-          title="Integrated Network Status"
-          value="Advisory"
-          hint="Active telemetry monitoring"
+          title="Firewall Enforcement"
+          value={merakiStatus?.configured ? 'Meraki' : 'Advisory'}
+          hint={merakiStatus?.configured ? 'Admin-confirmed only' : 'No integration configured'}
           icon={Server}
         />
       </div>
@@ -436,9 +436,10 @@ export function ResponseCenter() {
                                   size="sm"
                                   className="h-7 text-xs"
                                   onClick={() =>
+                                    act.sourceIp &&
                                     blockSourceIp(
-                                      act.sourceIp!,
-                                      `Admin-approved block from alert ${action.alertId}: ${action.attackType} (${action.severity}).`,
+                                      act.sourceIp,
+                                      `Admin-approved block from alert ${act.alertId}: ${act.attackType} (${act.severity}).`,
                                     )
                                   }
                                 >
@@ -474,6 +475,110 @@ export function ResponseCenter() {
                   </Table>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="policy">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-primary" />
+                Administrative Response Execution Policy
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Governs which response actions require supervisor approval, confirmation thresholds, and escalation rules.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-xs">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-border p-3 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center justify-between">
+                    <span>Critical Alert Mitigation</span>
+                    <Badge variant="destructive" className="text-[10px]">Admin Approval Required</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Actions touching high-availability service ports (80, 443, 22, 53) or critical threats require explicit Admin confirmation.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center justify-between">
+                    <span>Analyst Case Escalation</span>
+                    <Badge variant="success" className="text-[10px]">Analyst Permitted</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Security Analysts may open investigations, mark false positives, annotate incident evidence, and export forensic packages.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center justify-between">
+                    <span>Automatic Incident Creation</span>
+                    <Badge variant="outline" className="text-[10px]">Threshold Driven</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Configured under Alert Settings: when a detection exceeds the critical risk threshold, an investigation case is automatically provisioned.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center justify-between">
+                    <span>Evidence Preservation</span>
+                    <Badge variant="outline" className="text-[10px]">Immutable</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Exported evidence packages maintain full SHA-256 integrity and cannot modify the underlying training or prediction database.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="integrations">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Terminal className="h-4 w-4 text-primary" />
+                Network Perimeter & Enforcement Integrations
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Real-world network control status. Non-connected integrations operate in pure telemetry advisory mode.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-border/80 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground">Cisco Meraki MX</span>
+                    <Badge variant="outline" className="text-[10px]">Admin Approved</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Configured Meraki networks support exact IPv4 source blocks after explicit admin confirmation. Without backend credentials, firewall actions remain unavailable.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-border/80 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground">Endpoint Detection (EDR)</span>
+                    <Badge variant="outline" className="text-[10px]">Advisory Mode</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Provides forensic host isolation recommendations based on Bot and Infiltration flow verdicts.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-border/80 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground">Edge Router / NetFlow</span>
+                    <Badge variant="success" className="text-[10px]">Active Ingestion</Badge>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Accepts standardized CICIDS2017 bidirectional flow CSVs and packet stream replays for real-time inference.
+                  </p>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -579,110 +684,6 @@ export function ResponseCenter() {
             </Card>
           </TabsContent>
         )}
-
-        <TabsContent value="policy">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Sliders className="h-4 w-4 text-primary" />
-                Administrative Response Execution Policy
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Governs which response actions require supervisor approval, confirmation thresholds, and escalation rules.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-xs">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center justify-between">
-                    <span>Critical Alert Mitigation</span>
-                    <Badge variant="destructive" className="text-[10px]">Admin Approval Required</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Actions touching high-availability service ports (80, 443, 22, 53) or critical threats require explicit Admin confirmation.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center justify-between">
-                    <span>Analyst Case Escalation</span>
-                    <Badge variant="success" className="text-[10px]">Analyst Permitted</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Security Analysts may open investigations, mark false positives, annotate incident evidence, and export forensic packages.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center justify-between">
-                    <span>Automatic Incident Creation</span>
-                    <Badge variant="outline" className="text-[10px]">Threshold Driven</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Configured under Alert Settings: when a detection exceeds the critical risk threshold, an investigation case is automatically provisioned.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center justify-between">
-                    <span>Evidence Preservation</span>
-                    <Badge variant="outline" className="text-[10px]">Immutable</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Exported evidence packages maintain full SHA-256 integrity and cannot modify the underlying training or prediction database.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="integrations">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-primary" />
-                Network Perimeter & Enforcement Integrations
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Real-world network control status. Non-connected integrations operate in pure telemetry advisory mode.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-xs">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg border border-border/80 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-foreground">Next-Gen Firewall</span>
-                    <Badge variant="outline" className="text-[10px]">Advisory Mode</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Generates recommended IP/port filtering policies. Direct API pushing is offline to prevent inadvertent service lockout.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-border/80 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-foreground">Endpoint Detection (EDR)</span>
-                    <Badge variant="outline" className="text-[10px]">Advisory Mode</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Provides forensic host isolation recommendations based on Bot and Infiltration flow verdicts.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border border-border/80 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-foreground">Edge Router / NetFlow</span>
-                    <Badge variant="success" className="text-[10px]">Active Ingestion</Badge>
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    Accepts standardized CICIDS2017 bidirectional flow CSVs and packet stream replays for real-time inference.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       {/* Confirmation Dialog */}

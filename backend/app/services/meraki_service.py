@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -54,7 +55,8 @@ def _client() -> httpx.Client:
 
 
 def _firewall_path() -> str:
-    return f"/networks/{settings.MERAKI_NETWORK_ID.strip()}/appliance/firewall/l3FirewallRules"
+    network_id = quote(settings.MERAKI_NETWORK_ID.strip(), safe="")
+    return f"/networks/{network_id}/appliance/firewall/l3FirewallRules"
 
 
 def _read_policy(client: httpx.Client) -> dict[str, Any]:
@@ -116,7 +118,7 @@ def list_blocked_ips() -> list[dict[str, str]]:
         ip = _managed_ip(rule)
         if ip is not None and rule.get("policy") == "deny":
             blocks[ip] = {"ip": ip, "comment": str(rule.get("comment", ""))}
-    return [{"ip": ip, **blocks[ip]} for ip in sorted(blocks)]
+    return [blocks[ip] for ip in sorted(blocks)]
 
 
 def block_ip(ip: str) -> dict[str, Any]:
@@ -128,7 +130,12 @@ def block_ip(ip: str) -> dict[str, Any]:
     with _client() as client:
         policy = _read_policy(client)
         rules = policy["rules"]
-        if any(_managed_ip(rule) == canonical_ip for rule in rules if isinstance(rule, dict)):
+        if any(
+            isinstance(rule, dict)
+            and _managed_ip(rule) == canonical_ip
+            and rule.get("policy") == "deny"
+            for rule in rules
+        ):
             return {"ip": canonical_ip, "changed": False}
 
         managed_rule = {

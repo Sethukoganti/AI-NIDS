@@ -52,6 +52,20 @@ All endpoints require `Authorization: Bearer <jwt>` except `/api/health`, `/api/
 | 43 | GET | `/health/live` | public | liveness only |
 | 44 | GET | `/health/system` | Ad | detailed runtime/system information |
 
+### Admin network containment
+
+The following admin-only endpoints manage exact-source-IP rules in the configured Cisco Meraki
+MX network. Both firewall-changing operations require `confirm: true` and a reason. Blocks are
+manual (not automatic on alert), independent of AI-NIDS network status, IPv4-only, and tagged so
+individual removal or clearing does not delete unrelated firewall rules.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/admin/network/blocked-ips` | Integration status and AI-NIDS-managed blocks |
+| POST | `/admin/network/blocked-ips` | Add a source-IP deny rule |
+| POST | `/admin/network/blocked-ips/remove` | Remove one AI-NIDS-managed source-IP rule |
+| POST | `/admin/network/blocked-ips/clear` | Remove all AI-NIDS-managed rules only |
+
 ## Conventions
 
 - **Auth**: `Authorization: Bearer <jwt>`; the SSE endpoint additionally accepts `?token=` because
