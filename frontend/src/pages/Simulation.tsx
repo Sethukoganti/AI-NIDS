@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Activity, CircleStop, Info, Play, Radio,
+  Activity, Ban, CircleStop, Info, Play, Radio,
   RefreshCw, ShieldAlert, ShieldCheck, Waves, Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { ThreatFeed } from '@/components/ThreatFeed'
 import type { ScoredFlow } from '@/components/ThreatFeed'
 import { api, errorMessage, streamSse } from '@/lib/api'
 import { cn, formatNumber, formatPercent } from '@/lib/format'
+import { useAuth } from '@/context/AuthContext'
 
 interface StreamDone {
   total: number
@@ -42,11 +43,19 @@ interface SimulateResult {
 }
 
 export function Simulation() {
+  const { isAdmin } = useAuth()
   const [samples, setSamples] = useState<SampleOption[]>([])
   const [sample, setSample] = useState('simulation_stream.csv')
   const [rows, setRows] = useState(120)
   const [running, setRunning] = useState(false)
   const [flows, setFlows] = useState<ScoredFlow[]>([])
+  const [totalSeen, setTotalSeen] = useState(0)
+  const [suspiciousSeen, setSuspiciousSeen] = useState(0)
+  const [removedThreats, setRemovedThreats] = useState<Set<number>>(() => new Set())
+  const [removedCount, setRemovedCount] = useState(0)
+  const [blockedThreats, setBlockedThreats] = useState<Set<number>>(() => new Set())
+  const [blockingFlowIndex, setBlockingFlowIndex] = useState<number | null>(null)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [startInfo, setStartInfo] = useState<Record<string, unknown> | null>(null)
   const [done, setDone] = useState<StreamDone | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -77,6 +86,9 @@ export function Simulation() {
   const start = async () => {
     stop()
     setFlows([]); setDone(null); setError(null); setStartInfo(null); setPersistResult(null)
+    setTotalSeen(0); setSuspiciousSeen(0)
+    setRemovedThreats(new Set())
+    setRemovedCount(0); setBlockedThreats(new Set()); setActionNotice(null)
     setRunning(true)
     const controller = new AbortController()
     controllerRef.current = controller
@@ -101,8 +113,16 @@ export function Simulation() {
               source_ip: null, destination_ip: null, source_port: null, protocol: null,
             }
             setFlows(prev => [flow, ...prev].slice(0, 300))
+            setTotalSeen(count => count + 1)
+            if (flow.is_attack) setSuspiciousSeen(count => count + 1)
           }
-          else if (event === 'done') { setDone(data as StreamDone); setRunning(false) }
+          else if (event === 'done') {
+            const summary = data as StreamDone
+            setDone(summary)
+            setTotalSeen(summary.total)
+            setSuspiciousSeen(summary.suspicious)
+            setRunning(false)
+          }
           else if (event === 'error') { setError(String((data as any)?.message ?? 'Error')); setRunning(false) }
         },
         onError: msg => { if (controller.signal.aborted) return; setError(msg); setRunning(false) },
@@ -122,11 +142,46 @@ export function Simulation() {
     finally { setPersisting(false) }
   }
 
-  const cursor = (flows[0] as any)?.cursor
-  const totalSeen = cursor?.total ?? flows.length
-  const suspiciousSeen = flows.filter(f => f.is_attack).length
-  const progress = cursor?.progress ?? 0
+  const visibleSuspicious = Math.max(suspiciousSeen - removedThreats.size - blockedThreats.size, 0)
+  const progress = done ? 100 : Math.min((totalSeen / rows) * 100, 100)
   const activeSummary = done ?? null
+  const handleRemoveFlow = (flow: ScoredFlow) => {
+    setFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedCount(count => count + 1)
+    if (flow.is_attack) {
+      setRemovedThreats(current => new Set(current).add(flow.index))
+      setActionNotice(`Removed the following intrusion: ${flow.prediction} (flow #${flow.index}).`)
+    } else {
+      setActionNotice(`Removed connection (flow #${flow.index}).`)
+    }
+  }
+  const handleBlockIntrusion = async (flow: ScoredFlow) => {
+    setBlockingFlowIndex(flow.index)
+    setError(null)
+    setActionNotice(null)
+    setBlockedThreats(current => new Set(current).add(flow.index))
+    setFlows(current => current.filter(item => item.index !== flow.index))
+    try {
+      if (flow.source_ip && isAdmin) {
+        await api.post('/admin/network/blocks', {
+          network: flow.source_ip,
+          reason: `Attack simulation intrusion: ${flow.prediction} (flow #${flow.index})`,
+        })
+      }
+      setActionNotice(
+        flow.source_ip && isAdmin
+          ? `Blocked the following intrusion: ${flow.prediction} from ${flow.source_ip}. The IP is added to the AI-NIDS analysis blocklist; this simulation does not block live network traffic.`
+          : flow.source_ip
+            ? `Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}) for this run only. An admin can add the source IP to the analysis blocklist; this does not block live network traffic.`
+            : `Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}). Simulation data has no source IP, so this is recorded for this run only.`,
+      )
+    } catch (err) {
+      setActionNotice(`Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}) for this run; the IP policy could not be added.`)
+      setError(`Intrusion marked blocked for this run, but the analysis blocklist update failed: ${errorMessage(err)}`)
+    } finally {
+      setBlockingFlowIndex(null)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -186,9 +241,10 @@ export function Simulation() {
       </div>
 
       {error && <Alert variant="error" title="Stream error">{error}</Alert>}
+      {actionNotice && <Alert variant="success" title="Action completed">{actionNotice}</Alert>}
 
       {/* ══ Progress bar ════════════════════════════════════════════════════ */}
-      {startInfo && (running || flows.length > 0) && (
+      {startInfo && (running || totalSeen > 0) && (
         <div className="rounded-xl border border-border/60 bg-panel/50 px-5 py-3">
           <div className="flex items-center justify-between text-xs mb-2.5">
             <div className="flex items-center gap-3">
@@ -210,12 +266,15 @@ export function Simulation() {
       )}
 
       {/* ══ Live stats ══════════════════════════════════════════════════════ */}
-      {flows.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-3">
+      {totalSeen > 0 && (
+        <div className="space-y-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {[
             { label: 'Flows processed', value: totalSeen, hint: `of ${rows} requested`, icon: <Activity className="h-4 w-4" />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20' },
-            { label: 'Threats found', value: suspiciousSeen, hint: totalSeen ? `${formatPercent(suspiciousSeen / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: suspiciousSeen > 0 ? 'text-orange-400' : 'text-emerald-400', bg: suspiciousSeen > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'Threats found', value: visibleSuspicious, hint: totalSeen ? `${formatPercent(visibleSuspicious / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400', bg: visibleSuspicious > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20' },
             { label: 'Normal traffic', value: Math.max(totalSeen - suspiciousSeen, 0), hint: 'no action needed', icon: <ShieldCheck className="h-4 w-4" />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'Blocked intrusions', value: blockedThreats.size, hint: 'handled this run', icon: <Ban className="h-4 w-4" />, color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
+            { label: 'Removed connections', value: removedCount, hint: 'hidden from this list', icon: <CircleStop className="h-4 w-4" />, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border/50' },
           ].map(({ label, value, hint, icon, color, bg }) => (
             <div key={label} className={cn('rounded-xl border p-4', bg)}>
               <div className={cn('flex items-center gap-2 mb-2', color)}>{icon}<span className="text-xs font-semibold uppercase tracking-wide">{label}</span></div>
@@ -224,15 +283,25 @@ export function Simulation() {
             </div>
           ))}
         </div>
+        <p className="text-[10px] text-muted-foreground">
+          Blocking marks an intrusion handled in this run. Where a source IP is available, it is also added to the AI-NIDS analysis blocklist; this does not interrupt network traffic.
+        </p>
+        </div>
       )}
 
       {/* ══ Threat feed ═════════════════════════════════════════════════════ */}
-      {flows.length > 0 && (
+      {(running || totalSeen > 0) && (
         <ThreatFeed
           flows={flows}
           streaming={running}
           total={totalSeen}
-          suspicious={suspiciousSeen}
+          suspicious={visibleSuspicious}
+          removedThreats={removedThreats.size}
+          blockedThreats={blockedThreats.size}
+          onRemoveFlow={handleRemoveFlow}
+          onBlockIntrusion={handleBlockIntrusion}
+          blockedThreatIndexes={[...blockedThreats]}
+          blockingFlowIndex={blockingFlowIndex}
           emptyMessage='Click "Run simulation" to replay CICIDS2017 attack flows.'
           waitingMessage="Streaming flows through the model…"
         />
@@ -274,9 +343,9 @@ export function Simulation() {
             <div className="grid grid-cols-2 gap-3 text-center">
               {[
                 { label: 'Total', value: activeSummary.total },
-                { label: 'Threats', value: activeSummary.suspicious },
+                { label: 'Threats', value: visibleSuspicious },
                 { label: 'Normal', value: activeSummary.normal },
-                { label: 'Detection rate', value: null, pct: activeSummary.total ? activeSummary.suspicious / activeSummary.total : 0 },
+                { label: 'Detection rate', value: null, pct: activeSummary.total ? visibleSuspicious / activeSummary.total : 0 },
               ].map(({ label, value, pct }) => (
                 <div key={label} className="rounded-lg border border-border/50 bg-background/40 p-2.5">
                   <div className="text-xl font-bold tabular-nums text-foreground">

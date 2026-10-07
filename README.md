@@ -88,6 +88,10 @@ Shows what the system is, the processing pipeline diagram, model details, and de
 3. Real network flows appear scored as Safe (green) or a specific threat (red/orange)
 4. Click **"Inject test threats (demo)"** to instantly show 4 real attack detections for presentation
 
+Admins can add a detected source IP to the AI-NIDS analysis blocklist with **Block network**.
+This labels matching future analyses only; it does not add an operating-system firewall rule or
+interrupt active traffic. **Remove connection** only hides that flow from the current feed.
+
 ### Attack Simulation tab
 1. Select a sample file and number of flows
 2. Click **"Run simulation"**
@@ -95,7 +99,12 @@ Shows what the system is, the processing pipeline diagram, model details, and de
 4. Use this for demos when real attack traffic is not available
 
 ### AI Assistant
-Click the **sparkle button** (bottom-right corner) to ask questions about the system.
+Open **AI Security Copilot** for questions about recent detections, risk breakdowns, frequent
+source IPs, label agreement (including false positives/negatives when labelled data is available),
+alerts, investigations, model behavior, and—when signed in as an Admin—system health and audit
+activity. Answers use stored system evidence; source IP answers are omitted when detections contain
+no host addresses. Configure an optional AI provider for open-ended, evidence-grounded questions;
+the local assistant remains available without one.
 
 ---
 

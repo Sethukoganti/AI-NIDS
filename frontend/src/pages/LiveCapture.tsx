@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Activity, CircleStop, Clock, Network,
-  ShieldAlert, ShieldCheck, Wifi, Zap, FlaskConical,
+  Activity, Ban, CircleStop, Clock, Network,
+  ShieldAlert, ShieldCheck, Wifi, Zap, FlaskConical, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,6 +13,7 @@ import { ThreatFeed } from '@/components/ThreatFeed'
 import type { ScoredFlow } from '@/components/ThreatFeed'
 import { api, errorMessage, streamSse } from '@/lib/api'
 import { cn, formatNumber, formatPercent } from '@/lib/format'
+import { useAuth } from '@/context/AuthContext'
 
 interface CaptureStatus {
   agent_running: boolean
@@ -37,6 +38,7 @@ interface StartCaptureResponse {
 interface SessionSummary {
   total: number
   suspicious: number
+  safe: number
   packetsCaptured: number
   flowsCompleted: number
   interface: string | null
@@ -49,6 +51,7 @@ function AnimatedNumber({ value, className }: { value: number; className?: strin
 }
 
 export function LiveCapture() {
+  const { isAdmin } = useAuth()
   const [status, setStatus] = useState<CaptureStatus | null>(null)
   const [ifaces, setIfaces] = useState<IfaceOption[]>([])
   const [selectedIface, setSelectedIface] = useState('')
@@ -59,6 +62,11 @@ export function LiveCapture() {
   const [error, setError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [suspicious, setSuspicious] = useState(0)
+  const [removedThreats, setRemovedThreats] = useState<Set<number>>(() => new Set())
+  const [removedCount, setRemovedCount] = useState(0)
+  const [blockedThreats, setBlockedThreats] = useState<Set<number>>(() => new Set())
+  const [blockingFlowIndex, setBlockingFlowIndex] = useState<number | null>(null)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
   const [sessionStartTime, setSessionStartTime] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
@@ -101,6 +109,8 @@ export function LiveCapture() {
   const handleStart = async () => {
     setError(null); setStarting(true)
     setFlows([]); setTotal(0); setSuspicious(0); setSessionSummary(null); setElapsedSec(0)
+    setRemovedThreats(new Set())
+    setRemovedCount(0); setBlockedThreats(new Set()); setActionNotice(null)
     try {
       const result = await api.post<StartCaptureResponse>('/capture/start', { iface: selectedIface || null })
       if (!result.started) {
@@ -186,7 +196,8 @@ export function LiveCapture() {
       const result = await api.post<CaptureStatus>('/capture/stop', {})
       setStatus(result)
       setSessionSummary({
-        total, suspicious,
+        total, suspicious: visibleSuspicious,
+        safe: total - suspicious,
         packetsCaptured: result.packet_count ?? 0,
         flowsCompleted: result.flow_count ?? 0,
         interface: result.interface,
@@ -196,10 +207,50 @@ export function LiveCapture() {
     finally { setStopping(false) }
   }
 
+  const handleRemoveFlow = (flow: ScoredFlow) => {
+    setFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedCount(count => count + 1)
+    if (flow.is_attack) {
+      setRemovedThreats(current => new Set(current).add(flow.index))
+      setActionNotice(`Removed the following intrusion: ${flow.prediction} (flow #${flow.index}).`)
+    } else {
+      setActionNotice(`Removed connection (flow #${flow.index}).`)
+    }
+  }
+
+  const handleBlockIntrusion = async (flow: ScoredFlow) => {
+    setBlockingFlowIndex(flow.index)
+    setError(null)
+    setActionNotice(null)
+    setBlockedThreats(current => new Set(current).add(flow.index))
+    setFlows(current => current.filter(item => item.index !== flow.index))
+    try {
+      if (flow.source_ip && isAdmin) {
+        await api.post('/admin/network/blocks', {
+          network: flow.source_ip,
+          reason: `Live capture intrusion: ${flow.prediction} (flow #${flow.index})`,
+        })
+      }
+      setActionNotice(
+        flow.source_ip && isAdmin
+          ? `Blocked the following intrusion: ${flow.prediction} from ${flow.source_ip}. The IP is added to the AI-NIDS analysis blocklist; live traffic is not interrupted.`
+          : flow.source_ip
+            ? `Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}). It is recorded for this capture session only; an admin can add the source IP to the analysis blocklist. Live traffic is not interrupted.`
+            : `Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}). No source IP was available, so this is recorded for this capture session only; live traffic is not interrupted.`,
+      )
+    } catch (err) {
+      setActionNotice(`Blocked the following intrusion: ${flow.prediction} (flow #${flow.index}) for this capture session; the IP policy could not be added.`)
+      setError(`Intrusion marked blocked in this session, but the analysis blocklist update failed: ${errorMessage(err)}`)
+    } finally {
+      setBlockingFlowIndex(null)
+    }
+  }
+
   const agentRunning = status?.agent_running ?? false
   const modelReady = status?.model_ready ?? false
   const npcapMissing = error === 'NPCAP_MISSING' || (status !== null && !status.npcap_installed)
-  const threatRate = total > 0 ? suspicious / total : 0
+  const visibleSuspicious = Math.max(suspicious - removedThreats.size - blockedThreats.size, 0)
+  const threatRate = total > 0 ? visibleSuspicious / total : 0
 
   return (
     <div className="space-y-5">
@@ -307,9 +358,19 @@ export function LiveCapture() {
               <div className="flex items-center gap-1.5">
                 <ShieldAlert className="h-3.5 w-3.5 text-orange-400" />
                 <span className="text-muted-foreground">Threats:</span>
-                <span className={cn('font-mono font-bold', suspicious > 0 ? 'text-orange-400' : 'text-emerald-400')}>
-                  {formatNumber(suspicious)}
+                <span className={cn('font-mono font-bold', visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400')}>
+                  {formatNumber(visibleSuspicious)}
                 </span>
+              </div>
+              <div className="flex items-center gap-1.5" title="Intrusions marked blocked in this capture session; no live traffic is interrupted">
+                <Ban className="h-3.5 w-3.5 text-rose-400" />
+                <span className="text-muted-foreground">Blocked intrusions:</span>
+                <span className="font-mono font-bold text-rose-400">{blockedThreats.size}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <X className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">Removed:</span>
+                <span className="font-mono font-bold text-foreground">{removedCount}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -324,7 +385,7 @@ export function LiveCapture() {
                 <div className="w-24">
                   <Progress
                     value={threatRate * 100}
-                    className={cn('h-1.5', suspicious > 0 ? '[&>div]:bg-orange-400' : '[&>div]:bg-emerald-400')}
+                    className={cn('h-1.5', visibleSuspicious > 0 ? '[&>div]:bg-orange-400' : '[&>div]:bg-emerald-400')}
                   />
                 </div>
                 <span className={cn('font-mono font-semibold w-12 text-right',
@@ -334,6 +395,11 @@ export function LiveCapture() {
               </div>
             )}
           </div>
+          {isAdmin && (
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Block intrusion marks it handled in this session. Admins can also add an available source IP to the AI-NIDS analysis blocklist; neither action interrupts live traffic.
+            </p>
+          )}
           {/* Inject button + feedback */}
           <div className="mt-2.5 flex flex-wrap items-center gap-3 border-t border-primary/20 pt-2.5">
             <Button
@@ -399,7 +465,8 @@ export function LiveCapture() {
                 {[
                   { label: 'Flows scored', value: sessionSummary.total, color: 'text-primary' },
                   { label: 'Threats', value: sessionSummary.suspicious, color: sessionSummary.suspicious > 0 ? 'text-orange-400' : 'text-emerald-400' },
-                  { label: 'Safe', value: sessionSummary.total - sessionSummary.suspicious, color: 'text-emerald-400' },
+                  { label: 'Safe', value: sessionSummary.safe, color: 'text-emerald-400' },
+                  { label: 'Blocked intrusions', value: blockedThreats.size, color: 'text-rose-400' },
                   { label: 'Packets', value: sessionSummary.packetsCaptured, color: 'text-foreground' },
                 ].map(({ label, value, color }) => (
                   <div key={label}>
@@ -414,12 +481,21 @@ export function LiveCapture() {
       )}
 
       {/* ══ Threat feed ═════════════════════════════════════════════════════ */}
-      {!npcapMissing && flows.length > 0 && (
+      {actionNotice && (
+        <Alert variant="success" title="Action completed">{actionNotice}</Alert>
+      )}
+      {!npcapMissing && (streaming || flows.length > 0 || blockedThreats.size > 0 || removedCount > 0) && (
         <ThreatFeed
           flows={flows}
           streaming={streaming}
           total={total}
-          suspicious={suspicious}
+          suspicious={visibleSuspicious}
+          removedThreats={removedThreats.size}
+          blockedThreats={blockedThreats.size}
+          onRemoveFlow={handleRemoveFlow}
+          onBlockIntrusion={handleBlockIntrusion}
+          blockedThreatIndexes={[...blockedThreats]}
+          blockingFlowIndex={blockingFlowIndex}
           emptyMessage='Click "Start live capture" to begin monitoring.'
           waitingMessage="Monitoring… flows appear when TCP connections close or go idle (up to 12s)."
         />

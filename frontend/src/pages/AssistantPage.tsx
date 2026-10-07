@@ -46,7 +46,10 @@ const ANALYST_SUGGESTIONS = [
   'Explain how Port Scanning is detected',
   'What is the difference between DoS and DDoS in the model?',
   'Summarize today’s detected traffic and attack classes',
-  'Explain the 9 CICIDS2017 attack classes',
+  'Show the most recent detections',
+  'Break down detections by risk level',
+  'Which source IPs appear most often?',
+  'How often did predictions match dataset labels?',
   'How does the risk scoring engine work?',
   'Summarize active investigations and unresolved alerts',
 ]
@@ -58,6 +61,9 @@ const ADMIN_SUGGESTIONS = [
   'Show recent administrative actions and audit logs',
   'Summarize Random Forest model accuracy and training dataset',
   'Explain duplicate alert suppression and auto-incident policies',
+  'Show the most recent detections',
+  'Break down detections by risk level',
+  'How often did predictions match dataset labels?',
 ]
 
 export function AssistantPage() {
@@ -222,7 +228,7 @@ export function AssistantPage() {
 
           {/* Messages Stream */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.map((msg) => (
+            {messages.map((msg, index) => (
               <div
                 key={msg.id}
                 className={`flex gap-3 text-xs leading-relaxed ${
@@ -276,6 +282,33 @@ export function AssistantPage() {
                       ))}
                     </div>
                   )}
+
+                  {msg.role === 'assistant' &&
+                    !busy &&
+                    !messages.slice(index + 1).some((message) => message.role === 'assistant') && (
+                      <div className="border-t border-border/40 pt-2">
+                        <p className="mb-1.5 text-[10px] font-semibold text-muted-foreground">Ask a follow-up:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {activeSuggestions
+                            .filter((question) => !messages.some(
+                              (message) =>
+                                message.role === 'user' &&
+                                message.content.toLocaleLowerCase() === question.toLocaleLowerCase(),
+                            ))
+                            .slice(0, 3)
+                            .map((question) => (
+                              <button
+                                key={question}
+                                type="button"
+                                onClick={() => handleSend(question)}
+                                className="rounded-md border border-border/60 bg-background/40 px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                              >
+                                {question}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    )}
                 </div>
 
                 {msg.role === 'user' && (

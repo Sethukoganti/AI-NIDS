@@ -57,6 +57,14 @@ function MiniAssistant() {
       setMessages((m) => [...m, { role: 'bot', text: localAnswer(q) }])
     }, 300)
   }
+  const askedQuestions = new Set(
+    messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.text.toLocaleLowerCase()),
+  )
+  const followUpQuestions = QUICK_QUESTIONS
+    .filter((question) => !askedQuestions.has(question.toLocaleLowerCase()))
+    .slice(0, 3)
 
   return (
     <>
@@ -83,31 +91,37 @@ function MiniAssistant() {
           </div>
 
           <div ref={scrollRef} className="flex-1 space-y-2.5 overflow-y-auto p-3">
-            {messages.map((m, i) => (
-              <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-                <div className={cn(
-                  'max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed',
-                  m.role === 'user'
-                    ? 'bg-primary/15 border border-primary/30 text-foreground'
-                    : 'bg-background/50 border border-border/60 text-foreground/90',
-                )}>
-                  {m.text}
+            {messages.map((m, i) => {
+              const isLastBotMessage = m.role === 'bot' && i === messages.length - 1
+              return (
+                <div key={i} className={cn('flex flex-col', m.role === 'user' ? 'items-end' : 'items-start')}>
+                  <div className={cn(
+                    'max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed',
+                    m.role === 'user'
+                      ? 'bg-primary/15 border border-primary/30 text-foreground'
+                      : 'bg-background/50 border border-border/60 text-foreground/90',
+                  )}>
+                    {m.text}
+                  </div>
+                  {isLastBotMessage && (
+                    <div className="mt-2 space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground">You can ask next:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {followUpQuestions.map((question) => (
+                          <button
+                            key={question}
+                            onClick={() => ask(question)}
+                            className="rounded-md border border-border/60 bg-background/40 px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                          >
+                            {question}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
-            {messages.length <= 1 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {QUICK_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => ask(q)}
-                    className="rounded-md border border-border/60 bg-background/40 px-2 py-1 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            )}
+              )
+            })}
           </div>
 
           <form

@@ -2,9 +2,10 @@
  * Shared threat feed components used by both LiveCapture and Simulation pages.
  * Provides: ATTACK_INFO knowledge base, ThreatCard, SafeFlowRow, ThreatFeed
  */
-import { ClipboardList, Info, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { Ban, ClipboardList, Info, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { cn, formatNumber, formatPercent } from '@/lib/format'
 
 // --------------------------------------------------------------------------- //
@@ -209,7 +210,19 @@ export const RISK_CONFIG = {
 // --------------------------------------------------------------------------- //
 // ThreatCard — full explanation card for a suspicious flow
 // --------------------------------------------------------------------------- //
-export function ThreatCard({ flow }: { flow: ScoredFlow }) {
+export function ThreatCard({
+  flow,
+  onRemove,
+  onBlockIntrusion,
+  blocked,
+  blocking,
+}: {
+  flow: ScoredFlow
+  onRemove?: (flow: ScoredFlow) => void
+  onBlockIntrusion?: (flow: ScoredFlow) => void
+  blocked?: boolean
+  blocking?: boolean
+}) {
   const cfg = RISK_CONFIG[flow.risk_level as keyof typeof RISK_CONFIG] ?? RISK_CONFIG.medium
   const info = getAttackInfo(flow.prediction)
 
@@ -229,7 +242,38 @@ export function ThreatCard({ flow }: { flow: ScoredFlow }) {
             </div>
           </div>
         </div>
-        <Badge variant="secondary" className="font-mono text-[10px]">flow #{flow.index}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="font-mono text-[10px]">flow #{flow.index}</Badge>
+          {onBlockIntrusion && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={blocked || blocking}
+              aria-label={blocked ? 'Intrusion blocked' : 'Block intrusion'}
+              title="Mark this intrusion as blocked in AI-NIDS. If an IP is available, add it to the analysis blocklist; this does not interrupt network traffic."
+              onClick={() => onBlockIntrusion(flow)}
+              className="h-7 gap-1 px-2 text-[10px]"
+            >
+              <Ban className="h-3 w-3" />
+              {blocking ? 'Blocking…' : blocked ? 'Blocked' : 'Block intrusion'}
+            </Button>
+          )}
+          {onRemove && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Remove connection from list"
+              title="Remove from list"
+              onClick={() => onRemove(flow)}
+              className="h-7 gap-1 px-2 text-[10px]"
+            >
+              <X className="h-3 w-3" />
+              Remove connection
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Connection info */}
@@ -281,7 +325,13 @@ export function ThreatCard({ flow }: { flow: ScoredFlow }) {
 // --------------------------------------------------------------------------- //
 // SafeFlowRow — compact row for normal traffic
 // --------------------------------------------------------------------------- //
-export function SafeFlowRow({ flow }: { flow: ScoredFlow }) {
+export function SafeFlowRow({
+  flow,
+  onRemove,
+}: {
+  flow: ScoredFlow
+  onRemove?: (flow: ScoredFlow) => void
+}) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px]">
       <div className="flex items-center gap-2 min-w-0">
@@ -298,6 +348,19 @@ export function SafeFlowRow({ flow }: { flow: ScoredFlow }) {
       <div className="flex items-center gap-2 text-muted-foreground shrink-0">
         <span className="font-mono">{formatPercent(flow.confidence, 0)}</span>
         {flow.protocol && <span>{flow.protocol}</span>}
+        {onRemove && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Remove connection from list"
+            title="Remove from list"
+            onClick={() => onRemove(flow)}
+            className="h-7 w-7"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -311,6 +374,12 @@ export function ThreatFeed({
   streaming,
   total,
   suspicious,
+  removedThreats = 0,
+  blockedThreats = 0,
+  onRemoveFlow,
+  onBlockIntrusion,
+  blockedThreatIndexes = [],
+  blockingFlowIndex,
   emptyMessage = 'Click Start to begin monitoring.',
   waitingMessage = 'Waiting for first flow…',
 }: {
@@ -318,6 +387,12 @@ export function ThreatFeed({
   streaming: boolean
   total: number
   suspicious: number
+  removedThreats?: number
+  blockedThreats?: number
+  onRemoveFlow?: (flow: ScoredFlow) => void
+  onBlockIntrusion?: (flow: ScoredFlow) => void
+  blockedThreatIndexes?: number[]
+  blockingFlowIndex?: number | null
   emptyMessage?: string
   waitingMessage?: string
 }) {
@@ -346,7 +421,7 @@ export function ThreatFeed({
           )}
         </div>
 
-        {flows.length === 0 ? (
+        {flows.length === 0 && removedThreats === 0 && blockedThreats === 0 ? (
           <Card className="border-border/50">
             <CardContent className="py-12 text-center space-y-2">
               <ShieldAlert className="mx-auto h-10 w-10 text-muted-foreground/20" />
@@ -361,19 +436,32 @@ export function ThreatFeed({
             </CardContent>
           </Card>
         ) : threats.length === 0 ? (
-          <Card className="border-emerald-500/30 bg-emerald-500/5">
+          <Card className={suspicious > 0 || removedThreats > 0 || blockedThreats > 0 ? 'border-orange-500/30 bg-orange-500/5' : 'border-emerald-500/30 bg-emerald-500/5'}>
             <CardContent className="py-8 text-center space-y-1">
-              <ShieldCheck className="mx-auto h-8 w-8 text-emerald-400" />
-              <p className="text-sm font-semibold text-emerald-400">All traffic looks clean</p>
+              {suspicious > 0 || removedThreats > 0 || blockedThreats > 0
+                ? <ShieldAlert className="mx-auto h-8 w-8 text-orange-400" />
+                : <ShieldCheck className="mx-auto h-8 w-8 text-emerald-400" />}
+              <p className={cn('text-sm font-semibold', suspicious > 0 || removedThreats > 0 || blockedThreats > 0 ? 'text-orange-400' : 'text-emerald-400')}>
+                {suspicious > 0 || removedThreats > 0 || blockedThreats > 0 ? 'No threats in this list' : 'All traffic looks clean'}
+              </p>
               <p className="text-xs text-muted-foreground">
-                {total} flow{total !== 1 ? 's' : ''} analysed — no threats detected so far.
+                {suspicious > 0 || removedThreats > 0 || blockedThreats > 0
+                  ? `${suspicious} threat${suspicious !== 1 ? 's' : ''} remain${suspicious === 1 ? 's' : ''} in ${total} analysed flows; ${blockedThreats} blocked and ${removedThreats} removed from this list.`
+                  : `${total} flow${total !== 1 ? 's' : ''} analysed — no threats detected so far.`}
               </p>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-3 max-h-[620px] overflow-y-auto pr-1">
             {threats.slice(0, 25).map((flow, i) => (
-              <ThreatCard key={`${flow.index}-${i}`} flow={flow} />
+              <ThreatCard
+                key={`${flow.index}-${i}`}
+                flow={flow}
+                onRemove={onRemoveFlow}
+                onBlockIntrusion={onBlockIntrusion}
+                blocked={blockedThreatIndexes.includes(flow.index)}
+                blocking={blockingFlowIndex === flow.index}
+              />
             ))}
             {threats.length > 25 && (
               <p className="text-center text-xs text-muted-foreground py-2">
@@ -404,7 +492,7 @@ export function ThreatFeed({
             ) : (
               <div className="max-h-[300px] overflow-y-auto space-y-1">
                 {safeFlows.slice(0, 40).map((flow, i) => (
-                  <SafeFlowRow key={`safe-${flow.index}-${i}`} flow={flow} />
+                  <SafeFlowRow key={`safe-${flow.index}-${i}`} flow={flow} onRemove={onRemoveFlow} />
                 ))}
                 {safeFlows.length > 40 && (
                   <p className="text-center text-[10px] text-muted-foreground pt-1">

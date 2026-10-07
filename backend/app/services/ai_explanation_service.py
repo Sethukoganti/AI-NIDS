@@ -379,6 +379,11 @@ INTENT_KEYWORDS = {
         "algorithm explain", "how does detection work", "explain the algorithm",
         "what algorithm", "machine learning model",
     ],
+    "risk_distribution": [
+        "risk distribution", "risk breakdown", "how many critical", "how many high risk",
+        "risk levels", "breakdown by severity", "severity breakdown",
+        "break down detections by risk level", "risk level breakdown",
+    ],
     "risk_rules": [
         "risk level", "risk rule", "how is risk", "severity calculat", "risk score",
         "how severity", "what is risk", "risk formula", "risk threshold",
@@ -393,6 +398,21 @@ INTENT_KEYWORDS = {
         "most frequent attack", "most common attack", "which attack", "top attack",
         "appearing most", "dominant attack", "attack distribution", "most seen attack",
         "attack breakdown", "attack type frequency",
+    ],
+    "recent_detections": [
+        "recent detection", "latest detection", "most recent flow", "latest flow",
+        "recent flow", "last detected", "recent threat", "latest threat",
+        "show detections", "show me detections",
+    ],
+    "top_source": [
+        "top source ip", "most active source", "most frequent source", "top talker",
+        "which ip", "which source ip", "source ips", "source address",
+        "attacking ip", "attacker ip",
+    ],
+    "label_quality": [
+        "ground truth", "file label", "labelled data", "labeled data", "label match",
+        "false positive", "false negative", "prediction match", "model match rate",
+        "predictions match", "dataset labels", "label agreement",
     ],
     "model_info": [
         "accuracy", "model performance", "how accurate", "which model", "what model",
@@ -725,6 +745,30 @@ def answer(db, question: str, prediction_id: str | None = None, user: Any | None
             "sources": ["alerts table"],
         }
 
+    if intent == "risk_distribution":
+        rows = db.execute(
+            select(Prediction.risk_level, func.count())
+            .group_by(Prediction.risk_level)
+        ).all()
+        counts = {level: 0 for level in ("critical", "high", "medium", "low")}
+        for level, count in rows:
+            if level in counts:
+                counts[level] = int(count)
+        total = sum(counts.values())
+        breakdown = ", ".join(
+            f"{level.title()}: {count} ({count / total:.1%})" if total else f"{level.title()}: 0"
+            for level, count in counts.items()
+        )
+        return {
+            "provider": "local",
+            "answer": (
+                f"Risk breakdown across {total:,} stored detections: {breakdown}. "
+                "Risk is the system's prioritization score, not independent proof that an attack occurred."
+            ),
+            "facts": {"total": total, "risk_distribution": counts},
+            "sources": ["predictions table"],
+        }
+
     if intent == "top_attack":
         rows = db.execute(
             select(Prediction.prediction, func.count())
@@ -755,6 +799,134 @@ def answer(db, question: str, prediction_id: str | None = None, user: Any | None
             "sources": ["predictions table"],
         }
 
+    if intent == "recent_detections":
+        rows = db.scalars(
+            select(Prediction)
+            .order_by(Prediction.created_at.desc(), Prediction.id.desc())
+            .limit(8)
+        ).all()
+        detections = [
+            {
+                "prediction_id": row.id,
+                "prediction": row.prediction,
+                "is_attack": row.is_attack,
+                "confidence": round(row.confidence, 4),
+                "risk_level": row.risk_level,
+                "source_ip": row.source_ip,
+                "destination_ip": row.destination_ip,
+                "destination_port": row.destination_port,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+        lines = [
+            f"• {item['prediction']} — {item['risk_level']} risk, "
+            f"{item['confidence']:.1%} confidence"
+            + (f", source {item['source_ip']}" if item["source_ip"] else "")
+            for item in detections
+        ]
+        return {
+            "provider": "local",
+            "answer": "Most recently stored detections:\n" + (
+                "\n".join(lines) if lines else "No stored detections are available."
+            ),
+            "facts": {"detections": detections},
+            "sources": ["predictions table (latest 8)"],
+        }
+
+    if intent == "top_source":
+        rows = db.execute(
+            select(Prediction.source_ip, func.count())
+            .where(Prediction.is_attack.is_(True), Prediction.source_ip.is_not(None))
+            .group_by(Prediction.source_ip)
+            .order_by(func.count().desc())
+            .limit(8)
+        ).all()
+        sources = {str(ip): int(count) for ip, count in rows}
+        return {
+            "provider": "local",
+            "answer": (
+                "Most frequent source IPs among attack-classified flows: "
+                + (
+                    ", ".join(f"{ip} ({count})" for ip, count in sources.items())
+                    if sources
+                    else "none are available. The stored detections may not include source IP addresses."
+                )
+                + " These are model classifications; verify the evidence before taking action."
+            ),
+            "facts": {"source_ip_counts": sources},
+            "sources": ["predictions table"],
+        }
+
+    if intent == "label_quality":
+        from sqlalchemy import and_, case
+
+        labeled = int(
+            db.scalar(
+                select(func.count(Prediction.id)).where(Prediction.ground_truth.is_not(None))
+            ) or 0
+        )
+        if not labeled:
+            return {
+                "provider": "local",
+                "answer": (
+                    "The stored detections do not include ground-truth labels, so I cannot "
+                    "calculate a match rate or count false positives/false negatives. Analyze a "
+                    "labelled dataset to enable this comparison."
+                ),
+                "facts": {"labelled_rows": 0},
+                "sources": ["predictions table"],
+            }
+        normal_truth = Prediction.ground_truth == "Normal Traffic"
+        predicted_attack = Prediction.is_attack.is_(True)
+        binary_counts = db.execute(
+            select(
+                func.sum(case((and_(~normal_truth, predicted_attack), 1), else_=0)),
+                func.sum(case((and_(normal_truth, ~predicted_attack), 1), else_=0)),
+                func.sum(case((and_(normal_truth, predicted_attack), 1), else_=0)),
+                func.sum(case((and_(~normal_truth, ~predicted_attack), 1), else_=0)),
+            ).where(Prediction.ground_truth.is_not(None))
+        ).one()
+        true_positive, true_negative, false_positive, false_negative = (
+            int(value or 0) for value in binary_counts
+        )
+        matches = int(
+            db.scalar(
+                select(func.count(Prediction.id)).where(
+                    Prediction.ground_truth.is_not(None),
+                    Prediction.prediction == Prediction.ground_truth,
+                )
+            ) or 0
+        )
+        rate = matches / labeled
+        precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0
+        recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0
+        return {
+            "provider": "local",
+            "answer": (
+                f"The model prediction exactly matched the supplied dataset label on "
+                f"{matches:,} of {labeled:,} labelled stored flows ({rate:.1%}). In a binary "
+                f"attack-vs-normal comparison there were {false_positive:,} false positive(s) "
+                f"and {false_negative:,} false negative(s); precision was {precision:.1%} and "
+                f"recall was {recall:.1%}. This comparison depends on the supplied labels and is "
+                "not a live-network accuracy guarantee."
+            ),
+            "facts": {
+                "labelled_rows": labeled,
+                "exact_matches": matches,
+                "match_rate": round(rate, 6),
+                "binary": {
+                    "true_positive": true_positive,
+                    "true_negative": true_negative,
+                    "false_positive": false_positive,
+                    "false_negative": false_negative,
+                    "precision": round(precision, 6),
+                    "recall": round(recall, 6),
+                },
+            },
+            "sources": ["predictions.ground_truth and predictions.prediction"],
+        }
+
     if intent == "summary":
         stats = dashboard_service.overview(db, hours=24)
         summary = stats["metrics"]
@@ -782,16 +954,50 @@ def answer(db, question: str, prediction_id: str | None = None, user: Any | None
             evidence = build_prediction_evidence(payload, payload.get("explanation"), payload.get("ground_truth"))
             return explain(evidence)
 
+    if settings.ai_enabled:
+        try:
+            from app.services import dashboard_service
+
+            overview = dashboard_service.overview(db, hours=24)
+            context = {
+                "last_24_hours": overview["metrics"],
+                "attack_distribution": overview["attack_distribution"],
+                "risk_distribution": overview["risk_distribution"],
+                "model": overview["model"],
+                "limitations": [
+                    "Stored detections may combine uploaded datasets, simulations, and live capture.",
+                    "The assistant must not claim a live connection was blocked or terminated.",
+                    "Treat model predictions as probabilistic indicators, not confirmed incidents.",
+                ],
+            }
+            text_answer = _llm_complete(
+                "Answer the operator's question using only the supplied evidence. If the evidence "
+                "does not answer the question, say what is missing. Do not claim to perform an action.",
+                {"operator_question": question, "system_summary": context},
+            )
+            return {
+                "provider": settings.AI_PROVIDER,
+                "answer": text_answer.strip(),
+                "facts": context,
+                "sources": ["dashboard metrics and stored detection aggregates"],
+            }
+        except Exception as exc:
+            logger.warning("Assistant provider failed (%s); using local guidance", type(exc).__name__)
+
     return {
         "provider": "local",
         "answer": (
-            "I can answer questions that are grounded in this system's own data. Try:\n"
+            "I couldn't match that to a supported data query. I can still help with stored detections, "
+            "alerts, investigations, risk levels, model behavior, and attack classes. Try:\n"
             "• “Why was this traffic classified as suspicious?” (open a flow first)\n"
             "• “Explain the current alerts.”\n"
             "• “What attack type is appearing most frequently?”\n"
             "• “Summarize today's detected traffic.”\n"
-            "• “Explain Random Forest in simple terms.”\n"
-            "• “How is the risk level calculated?”"
+            "• “Show the most recent detections.”\n"
+            "• “Break down detections by risk level.”\n"
+            "• “Which source IPs appear most often?”\n"
+            "• “How often did predictions match the dataset labels?”\n"
+            "• “Explain Random Forest in simple terms.”"
         ),
         "facts": {},
         "sources": [],

@@ -167,6 +167,32 @@ export function AssistantPanel() {
                       grounded on: {message.sources.join(' · ')}
                     </div>
                   )}
+                  {message.role === 'assistant' &&
+                    !busy &&
+                    !messages.slice(index + 1).some((item) => item.role === 'assistant') && (
+                      <div className="mt-2 border-t border-border/50 pt-2">
+                        <p className="mb-1.5 text-[10px] font-semibold text-muted-foreground">Ask a follow-up:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {SUGGESTIONS
+                            .filter((suggestion) => !messages.some(
+                              (item) =>
+                                item.role === 'user' &&
+                                item.content.toLocaleLowerCase() === suggestion.toLocaleLowerCase(),
+                            ))
+                            .slice(0, 3)
+                            .map((suggestion) => (
+                              <button
+                                key={suggestion}
+                                type="button"
+                                onClick={() => ask(suggestion)}
+                                className="rounded-md border border-border/70 bg-background/50 px-2 py-1 text-left text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                              >
+                                {suggestion}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    )}
                 </div>
               </div>
             ))}
