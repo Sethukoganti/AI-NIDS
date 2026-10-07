@@ -426,6 +426,14 @@ def _npcap_installed() -> bool:
     return any(os.path.exists(p) for p in paths)
 
 
+def _scapy_installed() -> bool:
+    try:
+        import scapy.all  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _sniffer_thread_body(iface: str, stop: threading.Event) -> None:
     global _capture_active, _capture_error
     try:
@@ -477,6 +485,13 @@ def start_capture(iface: Optional[str] = None) -> dict:
 
     if _capture_active and _sniffer_thread and _sniffer_thread.is_alive():
         return {"started": False, "reason": "already_running", "interface": _capture_iface}
+
+    if not _scapy_installed():
+        return {
+            "started": False,
+            "reason": "scapy_missing",
+            "error": "SCAPY_MISSING",
+        }
 
     # Check Npcap before attempting anything
     if not _npcap_installed():

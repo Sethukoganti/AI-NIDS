@@ -29,6 +29,9 @@ shap==0.52.0                   # per-record TreeSHAP explanations
 # --- optional AI explanation provider --------------------------------------
 httpx==0.28.1
 
+# --- live packet capture ----------------------------------------------------
+scapy==2.6.1
+
 # --- testing ----------------------------------------------------------------
 pytest==8.3.4
 pytest-asyncio==0.25.0

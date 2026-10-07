@@ -45,7 +45,7 @@ Open a terminal and run:
 
 ```powershell
 cd path\to\AI-NIDS\backend
-pip install fastapi uvicorn python-multipart pydantic pydantic-settings email-validator SQLAlchemy alembic PyJWT bcrypt httpx scikit-learn pandas numpy joblib pyarrow shap --quiet
+pip install -r requirements.txt
 ```
 
 > If you get SSL errors, add `--trusted-host pypi.org --trusted-host files.pythonhosted.org`
@@ -152,11 +152,15 @@ AI-NIDS/
 
 **"No module named scapy"**
 ```powershell
-pip install scapy
+cd path\to\AI-NIDS\backend
+pip install -r requirements.txt
 ```
 
 **"Npcap is not installed"**
 Download and install from https://npcap.com — check "WinPcap API-compatible Mode" during install, then restart the backend.
+
+**"Permission denied" when starting live capture**
+On Windows, run the backend terminal as Administrator. Live packet capture requires elevated privileges and Npcap.
 
 **"Cannot reach the backend"**
 Make sure the backend terminal shows `Uvicorn running on http://0.0.0.0:8000` before opening the browser.

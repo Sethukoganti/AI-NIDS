@@ -27,6 +27,13 @@ interface CaptureStatus {
 
 interface IfaceOption { name: string; description: string; ips: string[] }
 
+interface StartCaptureResponse {
+  started: boolean
+  error?: string
+  hint?: string
+  reason?: string
+}
+
 interface SessionSummary {
   total: number
   suspicious: number
@@ -95,9 +102,15 @@ export function LiveCapture() {
     setError(null); setStarting(true)
     setFlows([]); setTotal(0); setSuspicious(0); setSessionSummary(null); setElapsedSec(0)
     try {
-      const result = await api.post<any>('/capture/start', { iface: selectedIface || null })
+      const result = await api.post<StartCaptureResponse>('/capture/start', { iface: selectedIface || null })
       if (!result.started) {
-        setError(result.error === 'NPCAP_MISSING' ? 'NPCAP_MISSING' : result.error || 'Could not start.')
+        setError(
+          result.error === 'NPCAP_MISSING'
+            ? 'NPCAP_MISSING'
+            : result.error === 'SCAPY_MISSING'
+              ? 'Scapy is not installed. Run "pip install -r requirements.txt" from the backend folder, then restart the backend.'
+              : result.error || result.hint || 'Could not start.',
+        )
         return
       }
       const startTs = Date.now()
