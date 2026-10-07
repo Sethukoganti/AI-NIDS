@@ -7,6 +7,7 @@ import {
   FileUp,
   Gauge,
   HelpCircle,
+  Radio,
   RefreshCw,
   ShieldAlert,
   Target,
@@ -25,8 +26,82 @@ import { GuideSteps } from '@/components/layout/GuideSteps'
 import { Reveal } from '@/components/motion/Reveal'
 import { useCountUp } from '@/hooks/useCountUp'
 import { api, errorMessage } from '@/lib/api'
-import { formatNumber, formatPercent, relativeTime } from '@/lib/format'
+import { cn, formatNumber, formatPercent, relativeTime } from '@/lib/format'
 import type { DashboardStats } from '@/lib/types'
+
+// ---- Network status types (analyst read-only view) ----
+interface NetworkStatusSummary {
+  status: string
+  status_key: string
+  label: string
+  description: string
+  tone: 'success' | 'info' | 'warning' | 'danger'
+  source: string
+  reason?: string | null
+  started_at?: string | null
+  recent_history: { status: string; source: string; reason?: string | null; started_at: string; ended_at?: string | null }[]
+}
+
+const TONE_CLASSES: Record<string, string> = {
+  success: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
+  info:    'text-sky-400 border-sky-500/30 bg-sky-500/10',
+  warning: 'text-yellow-400 border-yellow-500/30 bg-yellow-500/10',
+  danger:  'text-red-400 border-red-500/30 bg-red-500/10',
+}
+const DOT_CLASSES: Record<string, string> = {
+  success: 'bg-emerald-500',
+  info:    'bg-sky-500',
+  warning: 'bg-yellow-500',
+  danger:  'bg-red-500',
+}
+
+function NetworkStatusCard() {
+  const [status, setStatus] = useState<NetworkStatusSummary | null>(null)
+
+  useEffect(() => {
+    api.get<NetworkStatusSummary>('/analyst/network/status')
+      .then(setStatus)
+      .catch(() => setStatus(null))
+  }, [])
+
+  if (!status) return null
+
+  const tone = status.tone ?? 'info'
+  const toneClass = TONE_CLASSES[tone] ?? TONE_CLASSES.info
+  const dotClass = DOT_CLASSES[tone] ?? DOT_CLASSES.info
+
+  return (
+    <Card className={cn('border', toneClass)}>
+      <CardContent className="flex flex-wrap items-start justify-between gap-3 p-4">
+        <div className="flex items-start gap-3">
+          <span className="relative mt-0.5 flex h-3 w-3 shrink-0">
+            {tone === 'success' && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            )}
+            <span className={cn('relative inline-flex h-3 w-3 rounded-full', dotClass)} />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <Radio className="h-3.5 w-3.5 opacity-70" />
+              <span className="text-xs font-semibold uppercase tracking-wide opacity-70">Network status</span>
+            </div>
+            <div className="mt-0.5 text-sm font-bold">{status.label}</div>
+            <p className="mt-0.5 max-w-lg text-[11px] text-muted-foreground">{status.description}</p>
+            {status.reason && (
+              <p className="mt-1 text-[11px] italic text-muted-foreground">Reason: {status.reason}</p>
+            )}
+          </div>
+        </div>
+        <div className="text-right text-[10px] text-muted-foreground">
+          <div>Source: <span className="capitalize text-foreground/80">{status.source}</span></div>
+          {status.started_at && (
+            <div>Since: {relativeTime(status.started_at)}</div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 const WINDOWS = [
   { value: '24', label: 'Last 24 hours' },
@@ -200,6 +275,8 @@ export function Dashboard() {
               tone="info"
             />
           </div>
+
+          <NetworkStatusCard />
 
           <Reveal>
             <div className="grid gap-3 xl:grid-cols-3">

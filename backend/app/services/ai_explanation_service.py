@@ -354,27 +354,104 @@ CONCEPT_ANSWERS = {
 }
 
 INTENT_KEYWORDS = {
-    "explain_random_forest": ["random forest", "randomforest", "how does the model", "how does the ai work", "algorithm explain"],
-    "risk_rules": ["risk level", "risk rule", "how is risk", "severity calculat"],
-    "alerts": ["alert", "alarm", "notif"],
-    "top_attack": ["most frequent attack", "most common attack", "which attack", "top attack", "appearing most"],
-    "summary": ["summarize", "summarise", "summary", "overview of", "today's traffic", "todays traffic"],
-    "model_info": ["accuracy", "model performance", "how accurate", "which model", "what model", "dataset"],
-    "explain_dos": ["what is dos", "explain dos", "denial of service", "slowloris", "hulk", "goldeneye"],
-    "explain_ddos": ["what is ddos", "explain ddos", "distributed denial"],
-    "explain_port_scan": ["port scan", "portscan", "reconnaissance", "probing ports"],
-    "explain_brute_force": ["brute force", "patator", "password attack", "credential attack"],
-    "explain_web_attack": ["web attack", "sql injection", "sqli", "xss", "cross site scripting"],
-    "explain_bot": ["botnet", "bot traffic", "c2", "command and control", "beaconing"],
-    "explain_infiltration": ["infiltration", "lateral movement", "internal breach"],
+    # --- must come before "summary" so "summarize investigation" doesn't match summary first ---
+    "investigation_summary": [
+        "investigation", "active investigation", "summarize investigation",
+        "open case", "open incident", "security case", "case summary",
+        "current incident", "list incident", "show incident", "incident summary",
+        "security incident",
+    ],
+    # --- must come before "summary" so "summarize system health" hits this first ---
+    "system_health": [
+        "system health", "health check", "is the system healthy", "system status",
+        "backend health", "component status", "platform status", "platform health",
+        "service status", "runtime status",
+    ],
+    # --- must come before "summary" so "summarize audit" hits this first ---
+    "audit_activity": [
+        "audit log", "audit trail", "admin activity", "recent change", "who changed",
+        "what changed", "admin action", "administrative action", "recent admin",
+        "audit event", "show audit", "recent activity", "activity log",
+        "what happened", "admin log",
+    ],
+    "explain_random_forest": [
+        "random forest", "randomforest", "how does the model", "how does the ai work",
+        "algorithm explain", "how does detection work", "explain the algorithm",
+        "what algorithm", "machine learning model",
+    ],
+    "risk_rules": [
+        "risk level", "risk rule", "how is risk", "severity calculat", "risk score",
+        "how severity", "what is risk", "risk formula", "risk threshold",
+        "how is severity", "scoring engine",
+    ],
+    "alerts": [
+        "current alert", "unresolved alert", "open alert",
+        "alert queue", "show alerts", "list alerts", "what alerts",
+        "how many alerts", "alert status", "alarm",
+    ],
+    "top_attack": [
+        "most frequent attack", "most common attack", "which attack", "top attack",
+        "appearing most", "dominant attack", "attack distribution", "most seen attack",
+        "attack breakdown", "attack type frequency",
+    ],
+    "model_info": [
+        "accuracy", "model performance", "how accurate", "which model", "what model",
+        "dataset", "test accuracy", "model accuracy", "training dataset",
+        "model metrics", "f1 score", "macro f1",
+    ],
+    "explain_dos": [
+        "what is dos", "explain dos", "denial of service", "slowloris", "hulk",
+        "goldeneye", "dos attack", "dos hulk",
+    ],
+    "explain_ddos": [
+        "what is ddos", "explain ddos", "distributed denial", "ddos attack",
+    ],
+    "explain_port_scan": [
+        "port scan", "portscan", "reconnaissance", "probing ports", "port probing",
+        "network scan", "scanning",
+    ],
+    "explain_brute_force": [
+        "brute force", "patator", "password attack", "credential attack",
+        "ssh attack", "ftp attack", "login attempt",
+    ],
+    "explain_web_attack": [
+        "web attack", "sql injection", "sqli", "xss", "cross site scripting",
+        "web exploit", "http attack",
+    ],
+    "explain_bot": [
+        "botnet", "bot traffic", "c2", "command and control", "beaconing",
+        "bot detection", "what is bot",
+    ],
+    "explain_infiltration": [
+        "infiltration", "lateral movement", "internal breach", "insider threat",
+    ],
     "explain_heartbleed": ["heartbleed", "cve-2014-0160"],
-    "explain_normal": ["normal traffic", "benign traffic", "what is normal"],
-    "network_state": ["network state", "network status", "threat level", "operational mode", "monitoring mode"],
-    "system_health": ["system health", "health check", "is the system healthy", "system status", "backend health"],
-    "config_explanation": ["detection config", "alert config", "configuration", "threshold setting", "sensitivity setting"],
-    "audit_activity": ["audit log", "admin activity", "recent change", "who changed", "what changed", "admin action"],
-    "investigation_summary": ["investigation", "incident", "active investigation", "summarize investigation"],
-    "out_of_scope": ["hack", "exploit the", "attack a", "scan the network", "ddos the", "brute force the"],
+    "explain_normal": [
+        "normal traffic", "benign traffic", "what is normal", "legitimate traffic",
+    ],
+    "network_state": [
+        "network state", "network status", "threat level", "operational mode",
+        "monitoring mode", "current status", "network threat", "network operational",
+        "platform state",
+    ],
+    "config_explanation": [
+        "detection config", "alert config", "configuration", "threshold setting",
+        "sensitivity setting", "active threshold", "detection threshold",
+        "alert threshold", "min confidence", "max alerts", "duplicate suppression",
+        "auto incident", "risk threshold", "explain threshold", "detection setting",
+        "alert setting", "current config", "active config",
+        "detection and alert", "alert thresholds", "detection thresholds",
+        "active detection", "explain config", "alert suppression",
+    ],
+    # --- summary last so specific intents above can match first ---
+    "summary": [
+        "summarize", "summarise", "summary", "overview of",
+        "today's traffic", "todays traffic", "traffic overview",
+    ],
+    "out_of_scope": [
+        "hack", "exploit the", "attack a", "scan the network", "ddos the",
+        "brute force the",
+    ],
 }
 
 
@@ -580,9 +657,9 @@ def answer(db, question: str, prediction_id: str | None = None, user: Any | None
             }
         from app.models.database_models import AuditLog
 
-        recent = db.scalars(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(6)).all()
+        recent = db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(6)).all()
         log_items = [
-            f"• **{log.action}** on `{log.resource}` ({log.result}) at {log.timestamp.strftime('%H:%M:%S UTC') if log.timestamp else 'recently'}"
+            f"• **{log.action}** on `{log.resource}` ({log.result}) at {log.created_at.strftime('%H:%M:%S UTC') if log.created_at else 'recently'}"
             for log in recent
         ]
         return {

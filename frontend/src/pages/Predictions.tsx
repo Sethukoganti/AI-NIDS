@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Eye, Filter, Search, SlidersHorizontal } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Eye, Filter, Info, Search, ShieldAlert, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Select } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { Alert, Loading, PageHeader, RiskBadge, VerdictBadge } from '@/components/common'
+import { Alert, Loading, PageHeader, RiskBadge, StatCard, VerdictBadge } from '@/components/common'
 import { PredictionDetailDialog } from '@/components/PredictionDetail'
 import { api, errorMessage } from '@/lib/api'
 import { formatNumber, formatPercent } from '@/lib/format'
-import type { Prediction, PredictionPage, RiskLevel } from '@/lib/types'
+import type { AnalysisJob, Prediction, PredictionPage, RiskLevel } from '@/lib/types'
 
 const VERDICTS = [
   { value: 'all', label: 'All flows' },
@@ -39,6 +39,15 @@ export function Predictions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [jobSummary, setJobSummary] = useState<AnalysisJob | null>(null)
+
+  // Load the job summary when opened from the analyzer
+  useEffect(() => {
+    if (!jobId) { setJobSummary(null); return }
+    api.get<AnalysisJob>(`/predictions/jobs/${jobId}`)
+      .then(setJobSummary)
+      .catch(() => setJobSummary(null))
+  }, [jobId])
 
   const query = useMemo(() => {
     const qs = new URLSearchParams()
@@ -91,13 +100,8 @@ export function Predictions() {
   return (
     <>
       <PageHeader
-        title="Prediction Results"
-        subtitle={
-          <>
-            Every analysed flow with its predicted class, model confidence and risk level. Search, filter and
-            sort run as SQL queries on the backend - the browser only receives one page at a time.
-          </>
-        }
+        title="Detection Results"
+        subtitle="Every flow the Random Forest scored. Each row is one network connection — click Inspect to see exactly why the model made its decision."
         actions={
           <>
             <Select
@@ -121,11 +125,84 @@ export function Predictions() {
         }
       />
 
+      {/* Job summary banner — shown when opened directly from the analyzer */}
+      {jobSummary?.summary && (() => {
+        const s = jobSummary.summary as any
+        const total = s.total_records ?? 0
+        const normal = s.normal_records ?? 0
+        const suspicious = s.suspicious_records ?? 0
+        const alerts = s.alerts_generated ?? 0
+        const critical = s.critical_records ?? 0
+        const high = s.high_risk_records ?? 0
+        return (
+          <div className="mb-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Card className="border-border/70 bg-background/40">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Total flows</div>
+                <div className="mt-1 text-xl font-bold tabular-nums">{formatNumber(total)}</div>
+                <div className="text-[10px] text-muted-foreground">scored by the model</div>
+              </CardContent>
+            </Card>
+            <Card className="border-emerald-500/30 bg-emerald-500/5">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-400">Normal</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-emerald-400">{formatNumber(normal)}</div>
+                <div className="text-[10px] text-muted-foreground">{total ? formatPercent(normal/total, 0) : '—'} of flows</div>
+              </CardContent>
+            </Card>
+            <Card className="border-yellow-500/30 bg-yellow-500/5">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-yellow-400">Suspicious</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-yellow-400">{formatNumber(suspicious)}</div>
+                <div className="text-[10px] text-muted-foreground">classified as an attack type</div>
+              </CardContent>
+            </Card>
+            <Card className="border-orange-500/30 bg-orange-500/5">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-orange-400">High risk</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-orange-400">{formatNumber(high)}</div>
+                <div className="text-[10px] text-muted-foreground">confidence ≥ 85%</div>
+              </CardContent>
+            </Card>
+            <Card className="border-red-500/30 bg-red-500/5">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-red-400">Critical</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-red-400">{formatNumber(critical)}</div>
+                <div className="text-[10px] text-muted-foreground">highest confidence attacks</div>
+              </CardContent>
+            </Card>
+            <Card className="border-primary/30 bg-primary/5">
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wide text-primary">Alerts raised</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-primary">{formatNumber(alerts)}</div>
+                <div className="text-[10px] text-muted-foreground">grouped by attack + port</div>
+              </CardContent>
+            </Card>
+          </div>
+        )
+      })()}
+
+      {/* How-to-read explainer */}
+      <Card className="mb-4 border-border/60 bg-background/30">
+        <CardContent className="p-3">
+          <div className="flex items-start gap-2">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            <div className="space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+              <span className="font-semibold text-foreground">How to read this table: </span>
+              Each row is one network flow. <span className="text-foreground">Prediction</span> = what the Random Forest decided (e.g. "DoS Hulk", "Port Scanning", "Normal Traffic").{' '}
+              <span className="text-foreground">Confidence</span> = how many of the 100 trees agreed (higher = more certain).{' '}
+              <span className="text-foreground">Risk</span> = severity level computed from confidence × attack weight.{' '}
+              Click <span className="text-foreground">Inspect</span> on any row to see the exact features and why the model flagged it.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {jobId && (
         <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
-          <Badge variant="secondary">filtered to analysis job</Badge>
+          <Badge variant="secondary">filtered to this analysis job</Badge>
           <button className="underline hover:text-foreground" onClick={() => setParams({})}>
-            clear job filter
+            show all flows
           </button>
         </div>
       )}

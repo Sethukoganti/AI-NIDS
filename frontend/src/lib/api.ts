@@ -91,11 +91,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (response.status === 401 && !path.startsWith('/auth/login')) {
-    clearSession()
-    if (!window.location.pathname.startsWith('/login')) {
-      window.location.href = '/login?expired=1'
-    }
-    throw new ApiError('Your session has expired. Please sign in again.', 401)
+    // No auth in this app — ignore 401s
+    throw new ApiError('Authentication required.', 401)
   }
 
   const text = await response.text()

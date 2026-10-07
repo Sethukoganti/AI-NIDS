@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Database, HardDrive, KeyRound, LogOut, Server, UserCog, UserPlus, Users } from 'lucide-react'
+import { Database, HardDrive, KeyRound, LogOut, Pencil, Save, Server, ShieldCheck, UserCog, UserPlus, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input, Select } from '@/components/ui/input'
@@ -39,7 +39,7 @@ interface SystemInfo {
 }
 
 export function Settings() {
-  const { user, isAdmin, logout } = useAuth()
+  const { user, isAdmin, logout, refresh } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [usersError, setUsersError] = useState<string | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -47,6 +47,69 @@ export function Settings() {
   const [created, setCreated] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'analyst' as Role })
+
+  // ---- profile edit state ----
+  const [editingProfile, setEditingProfile] = useState(false)
+  const [profileForm, setProfileForm] = useState({ name: '', currentPassword: '', newPassword: '', confirmPassword: '' })
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
+
+  const startEdit = () => {
+    setProfileForm({ name: user?.name ?? '', currentPassword: '', newPassword: '', confirmPassword: '' })
+    setProfileSuccess(null)
+    setProfileError(null)
+    setEditingProfile(true)
+  }
+
+  const cancelEdit = () => {
+    setEditingProfile(false)
+    setProfileError(null)
+  }
+
+  const saveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setProfileError(null)
+    setProfileSuccess(null)
+
+    const payload: Record<string, string> = {}
+    if (profileForm.name.trim() && profileForm.name.trim() !== user?.name) {
+      payload.name = profileForm.name.trim()
+    }
+    if (profileForm.newPassword) {
+      if (profileForm.newPassword !== profileForm.confirmPassword) {
+        setProfileError('New passwords do not match.')
+        return
+      }
+      if (!profileForm.currentPassword) {
+        setProfileError('Current password is required to set a new one.')
+        return
+      }
+      payload.current_password = profileForm.currentPassword
+      payload.new_password = profileForm.newPassword
+    }
+    if (Object.keys(payload).length === 0) {
+      setEditingProfile(false)
+      return
+    }
+
+    setProfileSaving(true)
+    try {
+      const res = await api.patch<{ changed: string[]; user: User }>('/analyst/me', payload)
+      const changed = res.changed ?? []
+      setProfileSuccess(
+        changed.length === 0
+          ? 'No changes made.'
+          : `Updated: ${changed.join(', ')}.${changed.includes('password') ? ' Other sessions have been signed out.' : ''}`
+      )
+      setEditingProfile(false)
+      await refresh()
+    } catch (err) {
+      setProfileError(errorMessage(err))
+    } finally {
+      setProfileSaving(false)
+    }
+  }
 
   const loadUsers = useCallback(async () => {
     if (!isAdmin) return
@@ -116,17 +179,97 @@ export function Settings() {
             </CardTitle>
             <CardDescription>From GET /api/auth/me</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-0.5">
-            <KeyValue label="Name" value={user?.name ?? '—'} />
-            <KeyValue label="Email" value={user?.email ?? '—'} />
-            <KeyValue label="Role" value={<Badge variant={isAdmin ? 'default' : 'secondary'}>{user?.role}</Badge>} />
-            <KeyValue label="Account active" value={user?.is_active ? 'yes' : 'no'} />
-            <KeyValue label="Created" value={formatDateTime(user?.created_at)} />
-            <KeyValue label="Last sign-in" value={formatDateTime(user?.last_login_at)} />
-            <p className="pt-2 text-[10px] leading-relaxed text-muted-foreground">
-              Sessions use short-lived signed JWTs; signing out also revokes the token server-side. Passwords
-              are stored only as bcrypt hashes.
-            </p>
+          <CardContent className="space-y-3">
+            {profileSuccess && (
+              <Alert variant="success" title="Profile updated">{profileSuccess}</Alert>
+            )}
+
+            {!editingProfile ? (
+              <>
+                <div className="space-y-0.5">
+                  <KeyValue label="Name" value={user?.name ?? '—'} />
+                  <KeyValue label="Email" value={user?.email ?? '—'} />
+                  <KeyValue label="Role" value={<Badge variant={isAdmin ? 'default' : 'secondary'}>{user?.role}</Badge>} />
+                  <KeyValue label="Account active" value={user?.is_active ? 'yes' : 'no'} />
+                  <KeyValue label="Created" value={formatDateTime(user?.created_at)} />
+                  <KeyValue label="Last sign-in" value={formatDateTime(user?.last_login_at)} />
+                </div>
+                <Button size="sm" variant="outline" onClick={startEdit}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit profile
+                </Button>
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  Sessions use short-lived signed JWTs; signing out also revokes the token server-side.
+                  Passwords are stored only as bcrypt hashes.
+                </p>
+              </>
+            ) : (
+              <form onSubmit={saveProfile} className="space-y-3">
+                {profileError && (
+                  <Alert variant="error" title="Update failed">{profileError}</Alert>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="profile-name">Display name</Label>
+                  <Input
+                    id="profile-name"
+                    value={profileForm.name}
+                    onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                    placeholder={user?.name ?? 'Your name'}
+                  />
+                </div>
+                <div className="border-t border-border/60 pt-3">
+                  <p className="label-xs mb-2 flex items-center gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                    Change password — leave blank to keep current
+                  </p>
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="current-pw">Current password</Label>
+                      <Input
+                        id="current-pw"
+                        type="password"
+                        autoComplete="current-password"
+                        value={profileForm.currentPassword}
+                        onChange={(e) => setProfileForm({ ...profileForm, currentPassword: e.target.value })}
+                        placeholder="Required to change password"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="new-pw">New password</Label>
+                      <Input
+                        id="new-pw"
+                        type="password"
+                        autoComplete="new-password"
+                        value={profileForm.newPassword}
+                        onChange={(e) => setProfileForm({ ...profileForm, newPassword: e.target.value })}
+                        placeholder="Min 8 chars, letters + numbers"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="confirm-pw">Confirm new password</Label>
+                      <Input
+                        id="confirm-pw"
+                        type="password"
+                        autoComplete="new-password"
+                        value={profileForm.confirmPassword}
+                        onChange={(e) => setProfileForm({ ...profileForm, confirmPassword: e.target.value })}
+                        placeholder="Repeat new password"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={profileSaving}>
+                    <Save className="h-3.5 w-3.5" />
+                    {profileSaving ? 'Saving…' : 'Save changes'}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={cancelEdit} disabled={profileSaving}>
+                    <X className="h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
           </CardContent>
         </Card>
 

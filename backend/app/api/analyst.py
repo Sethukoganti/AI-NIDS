@@ -12,7 +12,11 @@ existing paths; this router adds the analyst-specific workflow surface.
 
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -21,12 +25,14 @@ from app.core.rbac import (
     P_ALERTS_ACKNOWLEDGE,
     P_ALERTS_VIEW,
     P_ASSISTANT_USE,
+    P_DASHBOARD_VIEW,
     P_DATASETS_UPLOAD,
     P_INVESTIGATIONS_NOTES,
     P_PREDICTIONS_VIEW,
     P_TRAFFIC_ANALYZE,
     require_permission,
 )
+from app.core.security import get_current_user, hash_password, verify_password
 from app.db.session import get_db
 from app.models.database_models import Alert, User
 from app.models.schemas import (
@@ -45,6 +51,7 @@ from app.services import (
     config_service,
     dataset_service,
     investigation_service,
+    network_status_service,
     notification_service,
     prediction_service,
 )
@@ -469,3 +476,187 @@ def read_all_notifications(
     count = notification_service.mark_all_read(db, user)
     db.commit()
     return {"marked": count}
+
+
+# --------------------------------------------------------------------------- #
+# Network status (read-only)
+# --------------------------------------------------------------------------- #
+@router.get("/network/status", summary="Current network operational status (read-only)")
+def network_status(
+    request: Request,
+    user: User = Depends(require_permission(P_DASHBOARD_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns the current network status so the analyst can see the platform threat
+    level without needing any administration permission.  Read-only: the analyst
+    sees the status, the reason it was set, and the last few transitions, but
+    cannot change it.
+    """
+    current = network_status_service.current_dict(db)
+    recent_history = network_status_service.history(db, limit=5)
+    return {
+        "status": current.get("status"),
+        "status_key": current.get("status_key"),
+        "label": current.get("label"),
+        "description": current.get("description"),
+        "tone": current.get("tone"),
+        "source": current.get("source"),
+        "reason": current.get("reason"),
+        "started_at": current.get("started_at"),
+        "changed_by": current.get("changed_by"),
+        "recent_history": recent_history[:5],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Self-service profile
+# --------------------------------------------------------------------------- #
+class _SelfUpdateRequest(Exception):
+    pass
+
+
+from pydantic import BaseModel, Field as PydanticField
+from typing import Optional
+
+
+class AnalystSelfUpdateRequest(BaseModel):
+    name: Optional[str] = PydanticField(default=None, min_length=1, max_length=120)
+    current_password: Optional[str] = PydanticField(default=None, min_length=1, max_length=256)
+    new_password: Optional[str] = PydanticField(default=None, min_length=1, max_length=256)
+
+
+@router.patch("/me", summary="Update own display name or password")
+def update_self(
+    payload: AnalystSelfUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Self-service profile update available to every authenticated user.
+    - Name change: just send ``name``.
+    - Password change: send ``current_password`` + ``new_password``.
+      ``current_password`` must match before the new one is accepted.
+    """
+    from app.core.config import settings
+
+    changed: list[str] = []
+
+    if payload.name is not None and payload.name.strip() != user.name:
+        user.name = payload.name.strip()
+        changed.append("name")
+
+    if payload.new_password is not None:
+        if not payload.current_password:
+            raise HTTPException(
+                status_code=422,
+                detail="current_password is required to set a new password.",
+            )
+        if not verify_password(payload.current_password, user.password_hash):
+            raise HTTPException(
+                status_code=401,
+                detail="Current password is incorrect.",
+            )
+        min_len = settings.PASSWORD_MIN_LENGTH
+        if len(payload.new_password) < min_len:
+            raise HTTPException(
+                status_code=422,
+                detail=f"New password must be at least {min_len} characters.",
+            )
+        if payload.new_password.isalpha() or payload.new_password.isdigit():
+            raise HTTPException(
+                status_code=422,
+                detail="New password must contain both letters and numbers.",
+            )
+        user.password_hash = hash_password(payload.new_password)
+        # Stamp access_reset_at so any other open sessions are invalidated.
+        from datetime import datetime, timezone
+        user.access_reset_at = datetime.now(timezone.utc)
+        changed.append("password")
+
+    if not changed:
+        return {"changed": [], "user": user.to_public_dict()}
+
+    db.flush()
+    audit_service.record(
+        db,
+        action="user.self_updated",
+        user=user,
+        request=request,
+        category=audit_service.CAT_USER,
+        resource=f"user:{user.id}",
+        new_value={"changed": changed},
+    )
+    db.commit()
+    db.refresh(user)
+    return {"changed": changed, "user": user.to_public_dict()}
+
+
+# --------------------------------------------------------------------------- #
+# Alert export (CSV)
+# --------------------------------------------------------------------------- #
+@router.get("/alerts/export", summary="Export filtered alerts as CSV")
+def export_alerts(
+    request: Request,
+    status: str | None = None,
+    severity: str | None = None,
+    attack_type: str | None = None,
+    job_id: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=5000, ge=1, le=10000),
+    user: User = Depends(require_permission(P_ALERTS_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """
+    Download the current alert queue as a CSV file.  Accepts the same filter
+    params as the paginated list endpoint so the analyst exports exactly what
+    they are looking at.
+    """
+    result = alert_service.list_alerts(
+        db,
+        status=status,
+        severity=severity,
+        attack_type=attack_type,
+        job_id=job_id,
+        search=search,
+        page=1,
+        page_size=limit,
+    )
+    alerts = result.get("items", [])
+
+    columns = [
+        "id",
+        "created_at",
+        "attack_type",
+        "alert_type",
+        "severity",
+        "status",
+        "confidence",
+        "risk_score",
+        "source_ip",
+        "destination_port",
+        "record_index",
+        "message",
+        "notes",
+        "resolved_at",
+        "acknowledged_at",
+        "escalated",
+        "job_id",
+        "dataset_id",
+        "prediction_id",
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for alert in alerts:
+        writer.writerow({col: alert.get(col, "") for col in columns})
+
+    output.seek(0)
+    filename = "ai_nids_alerts.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

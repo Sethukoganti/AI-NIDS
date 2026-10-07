@@ -5,7 +5,9 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
+  Download,
   Filter,
+  Info,
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react'
@@ -15,7 +17,7 @@ import { Input, Select } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Alert as InlineAlert, Loading, PageHeader, RiskBadge, StatCard, StatusBadge } from '@/components/common'
-import { api, errorMessage } from '@/lib/api'
+import { api, errorMessage, getToken, API_BASE } from '@/lib/api'
 import { formatNumber, formatPercent, relativeTime } from '@/lib/format'
 import type { Alert, AlertSummary } from '@/lib/types'
 
@@ -24,7 +26,6 @@ export function Alerts() {
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
   const [summary, setSummary] = useState<AlertSummary | null>(null)
-  const [rules, setRules] = useState<Record<string, unknown> | null>(null)
   const [status, setStatus] = useState('all')
   const [severity, setSeverity] = useState('all')
   const [search, setSearch] = useState('')
@@ -35,7 +36,6 @@ export function Alerts() {
   const [updating, setUpdating] = useState(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
     try {
       const qs = new URLSearchParams({
         status,
@@ -69,12 +69,25 @@ export function Alerts() {
     return () => clearInterval(timer)
   }, [load])
 
-  useEffect(() => {
-    api
-      .get<Record<string, unknown>>('/alerts/rules')
-      .then(setRules)
-      .catch(() => setRules(null))
-  }, [])
+  const exportCsv = () => {
+    const qs = new URLSearchParams({ limit: '5000' })
+    if (status !== 'all') qs.set('status', status)
+    if (severity !== 'all') qs.set('severity', severity)
+    if (search) qs.set('search', search)
+    const url = `${API_BASE}/analyst/alerts/export?${qs.toString()}`
+    const token = getToken()
+    // Use a hidden anchor with Authorization via fetch + blob for auth header support
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((res) => res.blob())
+      .then((blob) => {
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `ai_nids_alerts_${new Date().toISOString().slice(0, 10)}.csv`
+        a.click()
+        URL.revokeObjectURL(a.href)
+      })
+      .catch(() => setError('Export failed. Please try again.'))
+  }
 
   const updateStatus = async (alert: Alert, next: string) => {
     setUpdating(true)
@@ -104,10 +117,16 @@ export function Alerts() {
           </>
         }
         actions={
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={exportCsv} disabled={total === 0}>
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -291,57 +310,72 @@ export function Alerts() {
         </div>
 
         <div className="space-y-4">
+          {/* What is an alert? — plain language explainer */}
           <Card>
             <CardHeader>
-              <CardTitle>Risk rules — how severity is assigned</CardTitle>
-              <CardDescription>Live from GET /api/alerts/rules (no duplicated logic in the UI)</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Info className="h-4 w-4 text-primary" />
+                What is an alert?
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-[11px] leading-relaxed text-muted-foreground">
-              {rules ? (
-                <>
-                  {typeof rules.formula === 'string' && (
-                    <p className="rounded-md border border-border/70 bg-background/40 p-2 font-mono text-[10px] text-foreground/80">
-                      {rules.formula as string}
-                    </p>
-                  )}
-                  <div className="space-y-1">
-                    {(['critical', 'high', 'medium', 'low'] as const).map((level) => (
-                      <div key={level} className="flex items-center justify-between gap-2">
-                        <RiskBadge level={level} />
-                        <span className="font-mono">
-                          {level === 'critical' && 'score ≥ 0.96'}
-                          {level === 'high' && '0.85 – 0.9599'}
-                          {level === 'medium' && '0.65 – 0.8499'}
-                          {level === 'low' && 'below 0.65 / normal traffic'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {summary && (
-                    <div className="pt-2">
-                      <div className="label-xs mb-1.5">Current alert mix by attack type</div>
-                      <div className="space-y-1">
-                        {Object.entries(summary.by_attack_type ?? {})
-                          .sort(([, a], [, b]) => b - a)
-                          .slice(0, 6)
-                          .map(([type, count]) => (
-                            <div key={type} className="flex justify-between">
-                              <span className="truncate">{type}</span>
-                              <span className="font-mono text-foreground/80">{count}</span>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p>Rules endpoint unavailable - the backend exposes the canonical definition.</p>
-              )}
-              <p className="border-t border-border/60 pt-2">
-                Normal traffic always scores low; a port-scanning detection can never reach critical on
-                confidence alone because its severity weight (0.72) caps the score. Aggregated alerts carry
-                the number of flows they represent in the message.
+            <CardContent className="space-y-3 text-[11px] leading-relaxed text-muted-foreground">
+              <p>
+                An alert is raised when the Random Forest classifies a flow as an attack with{' '}
+                <span className="text-foreground font-medium">medium risk or higher</span>. Multiple flows
+                of the same attack type hitting the same destination port are collapsed into one
+                <span className="text-foreground font-medium"> "burst" alert</span> to avoid flooding the queue.
               </p>
+              <div className="space-y-1.5">
+                <div className="font-semibold text-foreground">Severity levels</div>
+                <div className="flex items-center justify-between">
+                  <RiskBadge level="critical" />
+                  <span className="font-mono">risk score ≥ 0.96</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <RiskBadge level="high" />
+                  <span className="font-mono">score ≥ 0.85</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <RiskBadge level="medium" />
+                  <span className="font-mono">score ≥ 0.65</span>
+                </div>
+                <p className="pt-1">
+                  Risk score = attack severity weight × model confidence, with a small bonus for sensitive ports (22, 80, 443…).
+                </p>
+              </div>
+              <div className="space-y-1.5 border-t border-border/60 pt-3">
+                <div className="font-semibold text-foreground">What to do with an alert</div>
+                <div className="space-y-1">
+                  {[
+                    { status: 'new', action: 'Just created — needs triage' },
+                    { status: 'reviewed', action: 'You looked at it' },
+                    { status: 'investigating', action: 'Linked to an open investigation' },
+                    { status: 'resolved', action: 'Confirmed and closed' },
+                    { status: 'false_positive', action: 'Model was wrong on this one' },
+                  ].map(({ status, action }) => (
+                    <div key={status} className="flex items-center gap-2">
+                      <StatusBadge status={status} />
+                      <span>{action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {summary && Object.keys(summary.by_attack_type ?? {}).length > 0 && (
+                <div className="border-t border-border/60 pt-3">
+                  <div className="font-semibold text-foreground mb-1.5">Current alert mix</div>
+                  <div className="space-y-1">
+                    {Object.entries(summary.by_attack_type ?? {})
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 6)
+                      .map(([type, count]) => (
+                        <div key={type} className="flex justify-between">
+                          <span className="truncate">{type}</span>
+                          <span className="font-mono text-foreground/80">{count}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

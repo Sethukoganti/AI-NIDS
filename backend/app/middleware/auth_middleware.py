@@ -33,12 +33,25 @@ PUBLIC_PATHS = {
     f"{settings.API_PREFIX}/health/live",
     f"{settings.API_PREFIX}/auth/login",
     f"{settings.API_PREFIX}/auth/config",
+    # Live capture & simulation — no login needed for the standalone monitor
+    f"{settings.API_PREFIX}/capture/status",
+    f"{settings.API_PREFIX}/capture/interfaces",
+    f"{settings.API_PREFIX}/capture/start",
+    f"{settings.API_PREFIX}/capture/stop",
+    f"{settings.API_PREFIX}/capture/stream",
+    f"{settings.API_PREFIX}/capture/inject",
+    f"{settings.API_PREFIX}/live/samples",
+    f"{settings.API_PREFIX}/live/stream",
     "/docs",
     "/redoc",
     "/openapi.json",
     "/favicon.ico",
 }
-PUBLIC_PREFIXES = (f"{settings.API_PREFIX}/health",)
+PUBLIC_PREFIXES = (
+    f"{settings.API_PREFIX}/health",
+    f"{settings.API_PREFIX}/capture",
+    f"{settings.API_PREFIX}/live",
+)
 
 
 class TokenDenylist:

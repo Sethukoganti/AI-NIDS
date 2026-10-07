@@ -1,25 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Activity,
-  CircleStop,
-  Info,
-  Play,
-  Radio,
-  RefreshCw,
-  ShieldAlert,
-  Waves,
+  Activity, CircleStop, Info, Play, Radio,
+  RefreshCw, ShieldAlert, ShieldCheck, Waves, Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Select } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Alert, PageHeader, RiskBadge, StatCard } from '@/components/common'
+import { Alert } from '@/components/common'
+import { ThreatFeed } from '@/components/ThreatFeed'
+import type { ScoredFlow } from '@/components/ThreatFeed'
 import { api, errorMessage, streamSse } from '@/lib/api'
-import { RISK_COLORS, formatNumber, formatPercent } from '@/lib/format'
-import type { LiveFlowEvent, RiskLevel } from '@/lib/types'
+import { cn, formatNumber, formatPercent } from '@/lib/format'
 
 interface StreamDone {
   total: number
@@ -27,6 +21,12 @@ interface StreamDone {
   normal: number
   risk_distribution: Record<string, number>
   attack_distribution: Record<string, number>
+}
+
+interface SampleOption {
+  name: string
+  label: string
+  rows: number
 }
 
 interface SimulateResult {
@@ -39,18 +39,14 @@ interface SimulateResult {
     risk_distribution: Record<string, number>
     attack_distribution: Record<string, number>
   }
-  persisted?: boolean
-  job_id?: string
-  [key: string]: unknown
 }
 
 export function Simulation() {
-  const [samples, setSamples] = useState<string[]>([])
-  const [disclaimer, setDisclaimer] = useState<string>('')
+  const [samples, setSamples] = useState<SampleOption[]>([])
   const [sample, setSample] = useState('simulation_stream.csv')
   const [rows, setRows] = useState(120)
   const [running, setRunning] = useState(false)
-  const [flows, setFlows] = useState<LiveFlowEvent[]>([])
+  const [flows, setFlows] = useState<ScoredFlow[]>([])
   const [startInfo, setStartInfo] = useState<Record<string, unknown> | null>(null)
   const [done, setDone] = useState<StreamDone | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -60,55 +56,56 @@ export function Simulation() {
 
   const loadSamples = useCallback(async () => {
     try {
-      const data = await api.get<{ samples: string[]; disclaimer?: string }>('/live/samples')
-      setSamples(Array.isArray(data) ? data : data.samples ?? [])
-      if (data.disclaimer) setDisclaimer(data.disclaimer)
+      const data = await api.get<{ samples: SampleOption[]; disclaimer?: string }>('/live/samples')
+      const list = Array.isArray(data) ? data : (data.samples ?? [])
+      const normalized: SampleOption[] = list.map((s: any) =>
+        typeof s === 'string' ? { name: s, label: s, rows: 0 } : s
+      )
+      setSamples(normalized)
     } catch {
-      setSamples(['simulation_stream.csv', 'sample_traffic.csv'])
+      setSamples([
+        { name: 'simulation_stream.csv', label: 'Simulation stream', rows: 800 },
+        { name: 'sample_traffic.csv', label: 'Mixed sample', rows: 1500 },
+      ])
     }
   }, [])
 
-  useEffect(() => {
-    loadSamples()
-    return () => controllerRef.current?.abort()
-  }, [loadSamples])
+  useEffect(() => { loadSamples(); return () => controllerRef.current?.abort() }, [loadSamples])
 
-  const stop = () => {
-    controllerRef.current?.abort()
-    controllerRef.current = null
-    setRunning(false)
-  }
+  const stop = () => { controllerRef.current?.abort(); controllerRef.current = null; setRunning(false) }
 
   const start = async () => {
     stop()
-    setFlows([])
-    setDone(null)
-    setError(null)
-    setStartInfo(null)
+    setFlows([]); setDone(null); setError(null); setStartInfo(null); setPersistResult(null)
     setRunning(true)
     const controller = new AbortController()
     controllerRef.current = controller
-
     await streamSse(
       `/live/stream?rows=${rows}&sample=${encodeURIComponent(sample)}`,
       {
         onEvent: (event, data) => {
           if (event === 'start') setStartInfo(data)
           else if (event === 'flow') {
-            setFlows((current) => [data as LiveFlowEvent, ...current].slice(0, 300))
-          } else if (event === 'done') {
-            setDone(data as StreamDone)
-            setRunning(false)
-          } else if (event === 'error') {
-            setError(String((data as { message?: string })?.message ?? 'Stream error'))
-            setRunning(false)
+            const raw = data as any
+            const flow: ScoredFlow = {
+              index: raw.index,
+              prediction: raw.prediction,
+              confidence: raw.confidence,
+              is_attack: raw.is_attack,
+              risk_level: raw.risk_level,
+              risk_score: raw.risk_score,
+              destination_port: raw.destination_port ?? null,
+              packet_rate: raw.packet_rate ?? null,
+              flow_duration: raw.flow_duration ?? null,
+              ground_truth: raw.ground_truth ?? null,
+              source_ip: null, destination_ip: null, source_port: null, protocol: null,
+            }
+            setFlows(prev => [flow, ...prev].slice(0, 300))
           }
+          else if (event === 'done') { setDone(data as StreamDone); setRunning(false) }
+          else if (event === 'error') { setError(String((data as any)?.message ?? 'Error')); setRunning(false) }
         },
-        onError: (message) => {
-          if (controller.signal.aborted) return
-          setError(message)
-          setRunning(false)
-        },
+        onError: msg => { if (controller.signal.aborted) return; setError(msg); setRunning(false) },
         onDone: () => setRunning(false),
       },
       controller.signal,
@@ -116,364 +113,214 @@ export function Simulation() {
   }
 
   const persistResults = async () => {
-    setPersisting(true)
-    setError(null)
+    setPersisting(true); setError(null)
     try {
-      const result = await api.post<SimulateResult>('/predictions/simulate', {
-        rows,
-        sample: sample.replace(/\.csv$/, ''),
-        persist: true,
-      })
-      setPersistResult(result)
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setPersisting(false)
-    }
+      setPersistResult(await api.post<SimulateResult>('/predictions/simulate', {
+        rows, sample: sample.replace(/\.csv$/, ''), persist: true,
+      }))
+    } catch (err) { setError(errorMessage(err)) }
+    finally { setPersisting(false) }
   }
 
-  const cursor = flows[0]?.cursor
-  const totalSeen = cursor?.total ?? 0
-  const suspiciousSeen = cursor?.suspicious ?? 0
+  const cursor = (flows[0] as any)?.cursor
+  const totalSeen = cursor?.total ?? flows.length
+  const suspiciousSeen = flows.filter(f => f.is_attack).length
   const progress = cursor?.progress ?? 0
-
-  const riskCounts = useMemo(() => {
-    const counts: Record<string, number> = { low: 0, medium: 0, high: 0, critical: 0 }
-    flows.forEach((flow) => {
-      counts[flow.risk_level] = (counts[flow.risk_level] ?? 0) + 1
-    })
-    return counts
-  }, [flows])
-
-  const attackCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    flows.forEach((flow) => {
-      if (flow.is_attack) counts[flow.prediction] = (counts[flow.prediction] ?? 0) + 1
-    })
-    return Object.entries(counts).sort(([, a], [, b]) => b - a)
-  }, [flows])
-
-  const activeSummary = done ?? (persistResult?.summary as StreamDone | undefined) ?? null
+  const activeSummary = done ?? null
 
   return (
-    <>
-      <PageHeader
-        title="Live Traffic Simulation"
-        subtitle={
-          <>
-            Real held-out CICIDS2017 flows replayed one at a time through the production detection pipeline
-            (preprocessing → Random Forest → risk engine) over Server-Sent Events. This is a simulation, not
-            packet capture: no network interface is being monitored.
-          </>
-        }
-        actions={
-          <>
-            <Select
-              value={sample}
-              onChange={(event) => setSample(event.target.value)}
-              className="w-[210px]"
-              disabled={running}
-            >
-              {(samples.length ? samples : ['simulation_stream.csv', 'sample_traffic.csv']).map((name) => (
-                <option key={name} value={name}>
-                  {name}
+    <div className="space-y-5">
+
+      {/* ══ Hero header ═════════════════════════════════════════════════════ */}
+      <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-panel/60 p-6">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-orange-500/5 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-10 left-10 h-40 w-40 rounded-full bg-primary/5 blur-2xl" />
+
+        <div className="relative flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-orange-500/30 bg-orange-500/10 shadow-[0_0_30px_rgba(249,115,22,0.15)]">
+              <Radio className="h-7 w-7 text-orange-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Attack Simulation</h1>
+              <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+                Replays real CICIDS2017 attack flows through the production pipeline. Use this to demo what threats look like — identical to live capture output.
+              </p>
+              {/* Info badge */}
+              <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/5 px-2.5 py-1 text-[11px] text-blue-300">
+                <Info className="h-3 w-3" />
+                Held-out test data — never used for training
+              </div>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={sample} onChange={e => setSample(e.target.value)}
+              className="w-[210px] text-xs" disabled={running}>
+              {samples.map(s => (
+                <option key={s.name} value={s.name}>
+                  {s.label} {s.rows > 0 ? `(${s.rows} flows)` : ''}
                 </option>
               ))}
             </Select>
-            <Select
-              value={String(rows)}
-              onChange={(event) => setRows(Number(event.target.value))}
-              className="w-[120px]"
-              disabled={running}
-            >
-              {[50, 120, 250, 500, 1000].map((value) => (
-                <option key={value} value={value}>
-                  {value} flows
-                </option>
+            <Select value={String(rows)} onChange={e => setRows(Number(e.target.value))}
+              className="w-[110px] text-xs" disabled={running}>
+              {[50, 120, 250, 500].map(v => (
+                <option key={v} value={v}>{v} flows</option>
               ))}
             </Select>
             {running ? (
-              <Button variant="destructive" size="sm" onClick={stop}>
-                <CircleStop className="h-3.5 w-3.5" />
-                Stop stream
+              <Button size="lg" variant="destructive" onClick={stop}
+                className="gap-2 shadow-[0_0_20px_rgba(239,68,68,0.25)]">
+                <CircleStop className="h-4 w-4" /> Stop
               </Button>
             ) : (
-              <Button size="sm" onClick={start}>
-                <Play className="h-3.5 w-3.5" />
-                Start simulation
+              <Button size="lg" onClick={start}
+                className="gap-2 bg-orange-500 hover:bg-orange-400 text-white shadow-[0_0_20px_rgba(249,115,22,0.3)] hover:shadow-[0_0_30px_rgba(249,115,22,0.4)]">
+                <Play className="h-4 w-4" /> Run simulation
               </Button>
             )}
-          </>
-        }
-      />
-
-      <div className="mb-4">
-        <Alert variant="warn" title="Simulation — not live packet capture">
-          {disclaimer ||
-            'Live Traffic Simulation replays real, held-out CICIDS2017 flow records one at a time. It does not capture packets from a network interface. Capturing real traffic would require a separately configured, privileged capture agent and is out of scope for this deployment.'}
-        </Alert>
+          </div>
+        </div>
       </div>
 
-      {error && (
-        <div className="mb-4">
-          <Alert variant="error" title="Simulation error">
-            {error}
-          </Alert>
-        </div>
-      )}
+      {error && <Alert variant="error" title="Stream error">{error}</Alert>}
 
-      {startInfo && (
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border/70 bg-panel/60 px-4 py-3 text-xs">
-          <Badge variant="default">
-            <Radio className="mr-1 h-3 w-3" />
-            {String((startInfo as { label?: string }).label ?? 'stream started')}
-          </Badge>
-          {typeof (startInfo as { sample?: string }).sample === 'string' && (
-            <span className="text-muted-foreground">sample: {(startInfo as { sample?: string }).sample}</span>
-          )}
-          {typeof (startInfo as { source?: string }).source === 'string' && (
-            <span className="text-muted-foreground">source: {(startInfo as { source?: string }).source}</span>
-          )}
-        </div>
-      )}
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Flows processed"
-          value={formatNumber(totalSeen)}
-          hint={`of ${formatNumber(rows)} requested · ${progress.toFixed(0)}% complete`}
-          icon={<Activity className="h-4 w-4" />}
-          tone="info"
-        />
-        <StatCard
-          label="Suspicious"
-          value={formatNumber(suspiciousSeen)}
-          hint={
-            totalSeen
-              ? `${formatPercent(suspiciousSeen / totalSeen, 1)} of processed flows`
-              : 'waiting for the first flows'
-          }
-          icon={<ShieldAlert className="h-4 w-4" />}
-          tone="warn"
-        />
-        <StatCard
-          label="Normal"
-          value={formatNumber(Math.max(totalSeen - suspiciousSeen, 0))}
-          hint="classified as Normal Traffic"
-          icon={<Waves className="h-4 w-4" />}
-          tone="good"
-        />
-        <StatCard
-          label="Newest detection"
-          value={flows[0] ? flows[0].prediction : '—'}
-          hint={
-            flows[0]
-              ? `confidence ${formatPercent(flows[0].confidence, 2)} · risk ${flows[0].risk_level}`
-              : 'stream idle'
-          }
-          tone={flows[0]?.is_attack ? 'bad' : 'good'}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <div>
-              <CardTitle>Live detection feed</CardTitle>
-              <CardDescription>
-                Newest first · each row was scored by the Random Forest as it streamed in. “Ground truth” is
-                the dataset label carried by the held-out record (never shown to the model).
-              </CardDescription>
+      {/* ══ Progress bar ════════════════════════════════════════════════════ */}
+      {startInfo && (running || flows.length > 0) && (
+        <div className="rounded-xl border border-border/60 bg-panel/50 px-5 py-3">
+          <div className="flex items-center justify-between text-xs mb-2.5">
+            <div className="flex items-center gap-3">
+              <Badge variant="secondary" className="gap-1.5">
+                <span className={cn('h-1.5 w-1.5 rounded-full', running ? 'bg-orange-400 animate-pulse' : 'bg-muted-foreground')} />
+                {String((startInfo as any).label ?? 'Simulation')}
+              </Badge>
+              <span className="text-muted-foreground">
+                {formatNumber(totalSeen)} flows · {formatNumber(suspiciousSeen)} threats
+              </span>
             </div>
-            {(running || flows.length > 0) && <Progress value={progress} className="w-32" />}
-          </CardHeader>
-          <CardContent className="p-0">
-            {flows.length === 0 ? (
-              <p className="p-8 text-center text-xs text-muted-foreground">
-                {running
-                  ? 'Waiting for the first flow…'
-                  : 'Press “Start simulation” to stream held-out flows through the model.'}
+            <span className={cn('font-mono font-bold', running ? 'text-orange-400' : 'text-muted-foreground')}>
+              {progress.toFixed(0)}%
+            </span>
+          </div>
+          <Progress value={progress}
+            className={cn('[&>div]:transition-all', running ? '[&>div]:bg-orange-400' : '[&>div]:bg-muted-foreground/40')} />
+        </div>
+      )}
+
+      {/* ══ Live stats ══════════════════════════════════════════════════════ */}
+      {flows.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { label: 'Flows processed', value: totalSeen, hint: `of ${rows} requested`, icon: <Activity className="h-4 w-4" />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20' },
+            { label: 'Threats found', value: suspiciousSeen, hint: totalSeen ? `${formatPercent(suspiciousSeen / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: suspiciousSeen > 0 ? 'text-orange-400' : 'text-emerald-400', bg: suspiciousSeen > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'Normal traffic', value: Math.max(totalSeen - suspiciousSeen, 0), hint: 'no action needed', icon: <ShieldCheck className="h-4 w-4" />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+          ].map(({ label, value, hint, icon, color, bg }) => (
+            <div key={label} className={cn('rounded-xl border p-4', bg)}>
+              <div className={cn('flex items-center gap-2 mb-2', color)}>{icon}<span className="text-xs font-semibold uppercase tracking-wide">{label}</span></div>
+              <div className={cn('text-3xl font-bold tabular-nums', color)}>{formatNumber(value)}</div>
+              {hint && <div className="mt-1 text-[11px] text-muted-foreground">{hint}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ══ Threat feed ═════════════════════════════════════════════════════ */}
+      {flows.length > 0 && (
+        <ThreatFeed
+          flows={flows}
+          streaming={running}
+          total={totalSeen}
+          suspicious={suspiciousSeen}
+          emptyMessage='Click "Run simulation" to replay CICIDS2017 attack flows.'
+          waitingMessage="Streaming flows through the model…"
+        />
+      )}
+
+      {/* ══ Empty state ═════════════════════════════════════════════════════ */}
+      {flows.length === 0 && !running && (
+        <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-panel/40 py-20 text-center">
+          <div className="pointer-events-none absolute inset-0 grid-line opacity-25" />
+          <div className="relative space-y-4">
+            <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-orange-500/20 bg-orange-500/5 shadow-[0_0_40px_rgba(249,115,22,0.1)]">
+              <Radio className="h-10 w-10 text-orange-400/50" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-muted-foreground">Ready to simulate</p>
+              <p className="mt-1 text-sm text-muted-foreground/60 max-w-md mx-auto">
+                Replays real attacks from the CICIDS2017 dataset through the model.
+                Great for demos — shows exactly what each threat looks like.
               </p>
-            ) : (
-              <div className="max-h-[520px] overflow-y-auto">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-panel">
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>Prediction</TableHead>
-                      <TableHead>Confidence</TableHead>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Dest port</TableHead>
-                      <TableHead>Packet rate</TableHead>
-                      <TableHead>Ground truth</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {flows.map((flow) => (
-                      <TableRow key={`${flow.index}-${flow.cursor?.total ?? 0}`}>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {flow.index}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={flow.is_attack ? 'danger' : 'success'}>{flow.prediction}</Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {formatPercent(flow.confidence, 2)}
-                        </TableCell>
-                        <TableCell>
-                          <RiskBadge level={flow.risk_level as RiskLevel} />
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{flow.destination_port ?? '—'}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {flow.packet_rate !== null && flow.packet_rate !== undefined
-                            ? formatNumber(flow.packet_rate, 1)
-                            : '—'}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {flow.ground_truth ?? '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+            </div>
+            {/* Attack types grid */}
+            <div className="flex flex-wrap justify-center gap-2 pt-2">
+              {['DoS Hulk', 'DDoS', 'Port Scanning', 'SSH Brute Force', 'SQL Injection', 'Botnet', 'Heartbleed', 'Normal Traffic'].map(a => (
+                <span key={a} className="rounded-full border border-border/60 bg-background/40 px-3 py-1 text-[11px] text-muted-foreground">
+                  {a}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Run summary + persist ════════════════════════════════════════════ */}
+      {activeSummary && !running && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Summary */}
+          <div className="rounded-xl border border-border/60 bg-panel/50 p-5 space-y-3">
+            <p className="text-sm font-semibold">Run summary</p>
+            <div className="grid grid-cols-2 gap-3 text-center">
+              {[
+                { label: 'Total', value: activeSummary.total },
+                { label: 'Threats', value: activeSummary.suspicious },
+                { label: 'Normal', value: activeSummary.normal },
+                { label: 'Detection rate', value: null, pct: activeSummary.total ? activeSummary.suspicious / activeSummary.total : 0 },
+              ].map(({ label, value, pct }) => (
+                <div key={label} className="rounded-lg border border-border/50 bg-background/40 p-2.5">
+                  <div className="text-xl font-bold tabular-nums text-foreground">
+                    {pct !== undefined ? formatPercent(pct, 1) : formatNumber(value ?? 0)}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+                </div>
+              ))}
+            </div>
+            {Object.keys(activeSummary.attack_distribution ?? {}).length > 0 && (
+              <div className="space-y-1 pt-1 border-t border-border/50">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Attack types found</p>
+                {Object.entries(activeSummary.attack_distribution).sort(([,a],[,b])=>b-a).map(([name, count]) => (
+                  <div key={name} className="flex justify-between text-xs">
+                    <span className="text-muted-foreground truncate">{name}</span>
+                    <span className="font-mono font-semibold text-orange-400">{count}</span>
+                  </div>
+                ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
 
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Risk levels in this run</CardTitle>
-              <CardDescription>
-                {flows.length ? `${flows.length} flows streamed (latest 300 kept)` : 'No data yet'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {(['critical', 'high', 'medium', 'low'] as RiskLevel[]).map((level) => {
-                const value = riskCounts[level] ?? 0
-                const share = flows.length ? value / flows.length : 0
-                return (
-                  <div key={level} className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="capitalize text-muted-foreground">{level}</span>
-                      <span className="font-mono text-foreground/85">
-                        {value} · {formatPercent(share, 1)}
-                      </span>
-                    </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{ width: `${share * 100}%`, background: RISK_COLORS[level] }}
-                      />
-                    </div>
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Attack families observed</CardTitle>
-              <CardDescription>Among the streamed flows</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {attackCounts.length === 0 ? (
-                <p className="py-4 text-center text-xs text-muted-foreground">
-                  No suspicious flows in this run yet.
-                </p>
-              ) : (
-                <div className="space-y-1.5">
-                  {attackCounts.map(([name, count]) => (
-                    <div key={name} className="flex items-center justify-between text-xs">
-                      <span className="truncate text-foreground/85">{name}</span>
-                      <span className="font-mono text-muted-foreground">{count}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {activeSummary && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Run summary</CardTitle>
-                <CardDescription>
-                  {done ? 'Stream completed' : 'Persisted simulation'}: {formatNumber(activeSummary.total)} flows
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Normal</span>
-                  <span className="font-mono">{formatNumber(activeSummary.normal)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Suspicious</span>
-                  <span className="font-mono">{formatNumber(activeSummary.suspicious)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Detection rate</span>
-                  <span className="font-mono">
-                    {formatPercent(
-                      activeSummary.total ? activeSummary.suspicious / activeSummary.total : 0,
-                      1,
-                    )}
-                  </span>
-                </div>
-                <div className="border-t border-border/60 pt-2">
-                  <div className="label-xs mb-1.5">Attack distribution</div>
-                  {Object.entries(activeSummary.attack_distribution ?? {}).length === 0 ? (
-                    <p className="text-muted-foreground">Only normal traffic in this run.</p>
-                  ) : (
-                    Object.entries(activeSummary.attack_distribution).map(([name, count]) => (
-                      <div key={name} className="flex justify-between">
-                        <span className="truncate text-muted-foreground">{name}</span>
-                        <span className="font-mono text-foreground/85">{count}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Persist a simulation</CardTitle>
-              <CardDescription>
-                Stores the simulated flows as predictions (and alerts) so they appear in the dashboard,
-                results table and alert queue.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Button className="w-full" onClick={persistResults} disabled={persisting || running}>
-                <RefreshCw className={persisting ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
-                {persisting ? 'Storing results…' : `Simulate & store ${rows} flows`}
-              </Button>
-              {persistResult && (
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Stored {formatNumber(persistResult.processed ?? 0)} flows in{' '}
-                  {persistResult.elapsed_ms ?? 0} ms
-                  {persistResult.summary
-                    ? ` · ${persistResult.summary.suspicious_records} suspicious, ${formatNumber(
-                        Object.values(persistResult.summary.risk_distribution).reduce((a, b) => a + b, 0),
-                      )} scored`
-                    : ''}
-                  . <Link className="text-primary underline" to="/detections?verdict=attack">Open results</Link>{' '}
-                  · <Link className="text-primary underline" to="/detections?tab=alerts">Alerts</Link>
-                </p>
-              )}
-              <p className="flex items-start gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
-                <Info className="mt-0.5 h-3 w-3 shrink-0" />
-                Persisted simulations are labelled with source “simulation” in the database, keeping them
-                distinguishable from uploaded datasets.
+          {/* Save to DB */}
+          <div className="rounded-xl border border-border/60 bg-panel/50 p-5 space-y-3">
+            <p className="text-sm font-semibold">Save results to database</p>
+            <p className="text-xs text-muted-foreground">
+              Stores scored flows as predictions so they appear in the Detections and Alerts pages for deeper investigation.
+            </p>
+            <Button className="w-full gap-2" onClick={persistResults} disabled={persisting || running}>
+              <RefreshCw className={cn('h-3.5 w-3.5', persisting && 'animate-spin')} />
+              {persisting ? 'Saving…' : `Save ${rows} flows to database`}
+            </Button>
+            {persistResult && (
+              <p className="text-[11px] text-emerald-400">
+                ✓ Saved {formatNumber(persistResult.processed ?? 0)} flows
               </p>
-            </CardContent>
-          </Card>
+            )}
+            <p className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" />
+              Saved flows are labelled "simulation" — distinct from real uploaded datasets.
+            </p>
+          </div>
         </div>
-      </div>
-    </>
+      )}
+    </div>
   )
 }

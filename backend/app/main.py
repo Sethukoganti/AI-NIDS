@@ -25,6 +25,7 @@ from app.api import (
     analyst,
     assistant,
     auth,
+    capture,
     dashboard,
     datasets,
     health,
@@ -143,6 +144,7 @@ app.include_router(dashboard.router, prefix=API)
 app.include_router(model_api.router, prefix=API)
 app.include_router(assistant.router, prefix=API)
 app.include_router(live.router, prefix=API)
+app.include_router(capture.router, prefix=API)
 
 
 # --------------------------------------------------------------------------- #

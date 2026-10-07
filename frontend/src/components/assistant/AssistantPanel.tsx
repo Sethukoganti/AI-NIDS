@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Bot, Loader2, Send, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,12 +38,16 @@ const SUGGESTIONS = [
  * an answer and shows which provider produced it.
  */
 export function AssistantPanel() {
+  const location = useLocation()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<AssistantStatus | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  // Don't render on the full assistant page — it has its own chat UI
+  const isAssistantPage = location.pathname === '/assistant'
 
   useEffect(() => {
     api
@@ -56,6 +61,8 @@ export function AssistantPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages, open, busy])
+
+  if (isAssistantPage) return null
 
   const ask = async (question: string) => {
     const text = question.trim()
