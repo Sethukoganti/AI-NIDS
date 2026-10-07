@@ -1090,3 +1090,4 @@ values from the bundled held-out sample):
 
 Built as an academic project: Machine Learning + Cybersecurity + Full-Stack + Explainable AI + a
 grounded AI explanation layer, on real data, with no fabricated results. Defensive use only.
+Contributed to the AI-NIDS project by updating the project documentation.
