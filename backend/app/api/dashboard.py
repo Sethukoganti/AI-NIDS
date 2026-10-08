@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.rbac import P_DASHBOARD_VIEW, P_ALERTS_VIEW, require_permission
 from app.db.session import get_db
 from app.models.database_models import User
-from app.services import alert_service, dashboard_service
+from app.services import alert_service, dashboard_service, model_monitoring_service
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -30,6 +30,15 @@ def timeline(
     db: Session = Depends(get_db),
 ):
     return {"points": dashboard_service.traffic_timeline(db, hours=hours), "hours": hours}
+
+
+@router.get("/model-monitoring", summary="Operational model confidence and prediction trends")
+def model_monitoring(
+    hours: int = Query(168, ge=24, le=720),
+    user: User = Depends(require_permission(P_DASHBOARD_VIEW)),
+    db: Session = Depends(get_db),
+):
+    return model_monitoring_service.overview(db, hours=hours)
 
 
 @router.get("/recent-alerts", summary="Latest alerts for the dashboard table")

@@ -51,6 +51,60 @@
   .disclosure-body { grid-template-rows: 1fr; opacity: 1; }
 }
 
+@media print {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --panel: 0 0% 100%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 40%;
+    --border: 214 32% 85%;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: 0 !important;
+    background: white !important;
+  }
+
+  body {
+    background-image: none !important;
+    color: #111 !important;
+  }
+
+  header,
+  nav,
+  button,
+  input,
+  select,
+  .grid-line {
+    display: none !important;
+  }
+
+  main {
+    overflow: visible !important;
+  }
+
+  .card {
+    break-inside: avoid;
+    background: white !important;
+    box-shadow: none !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  th,
+  td {
+    border: 1px solid #d1d5db !important;
+    color: #111 !important;
+  }
+}
+
 @layer components {
   .card {
     @apply rounded-xl border border-border/80 bg-panel/70 backdrop-blur-sm shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset];

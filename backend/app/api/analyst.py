@@ -43,6 +43,7 @@ from app.models.schemas import (
     InvestigationOut,
     InvestigationPage,
     InvestigationUpdateRequest,
+    NotificationPreferences,
 )
 from app.services import (
     ai_explanation_service,
@@ -451,6 +452,24 @@ def notifications(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/notification-preferences", summary="Current user's in-app notification preferences")
+def get_notification_preferences(
+    user: User = Depends(require_permission(P_ALERTS_VIEW)),
+):
+    return notification_service.get_preferences(user)
+
+
+@router.put("/notification-preferences", summary="Update current user's in-app notification preferences")
+def update_notification_preferences(
+    payload: NotificationPreferences,
+    user: User = Depends(require_permission(P_ALERTS_VIEW)),
+    db: Session = Depends(get_db),
+):
+    result = notification_service.update_preferences(db, user, payload.model_dump())
+    db.commit()
+    return result
 
 
 @router.post("/notifications/{notification_id}/read", summary="Mark a notification read")

@@ -16,6 +16,10 @@
 12. RESTRICTED FLOW ACTIONS BY ROLE: Admin retains remove/block actions in live capture and simulation; Analyst can review detections without either action
 13. ADDED SIGN-OUT TO ACTIVE APP HEADER: authenticated users can end their session and return to the sign-in page
 14. ADDED FLOW HISTORY FILTERS: Threats, normal traffic, blocked flows, and removed flows can be opened from their counters; Admins can unblock or restore flows back into the active list
+15. EXPOSED EXISTING SOC PAGES IN THE ACTIVE APP: Dashboard, Detections, Notifications, and admin-only Settings now have reachable routes and navigation
+16. ADDED MODEL MONITORING: dashboard aggregates recent prediction volume, confidence, low-confidence share, labeled accuracy (when ground truth exists), and class trends
+17. ADDED SAVED DASHBOARD VIEWS: users can save and restore named time-window presets in their browser
+18. ADDED PDF-ONLY REPORT EXPORT: Detection Results can be printed or saved as PDF for the active filters and page; no email delivery or PDF package is used
 
 ## REAL METRICS (not invented)
 - Algorithm: Random Forest

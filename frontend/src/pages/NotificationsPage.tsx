@@ -3,6 +3,7 @@ import {
   AlertOctagon,
   AlertTriangle,
   Bell,
+  BrainCircuit,
   Check,
   CheckCheck,
   Clock,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Settings2,
   Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -23,10 +25,15 @@ import { Select } from '@/components/ui/input'
 import { Alert as InlineAlert, Loading, PageHeader, StatCard } from '@/components/common'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime, relativeTime } from '@/lib/format'
-import { useAuth } from '@/context/AuthContext'
 import type { NotificationItem } from '@/lib/types'
 
 const CATEGORY_MAP: Record<string, { label: string; icon: any }> = {
+  alert: { label: 'Alert', icon: AlertTriangle },
+  network: { label: 'Network', icon: Radio },
+  model: { label: 'Model', icon: BrainCircuit },
+  system: { label: 'System', icon: ShieldAlert },
+  user: { label: 'User', icon: Info },
+  dataset: { label: 'Dataset', icon: Info },
   critical_alert: { label: 'Critical Threat', icon: AlertOctagon },
   high_alert: { label: 'High Threat', icon: AlertTriangle },
   investigation_update: { label: 'Case Update', icon: Zap },
@@ -36,8 +43,15 @@ const CATEGORY_MAP: Record<string, { label: string; icon: any }> = {
   system_failure: { label: 'Service Alert', icon: AlertOctagon },
 }
 
+const NOTIFICATION_CATEGORIES = ['alert', 'network', 'model', 'system', 'user', 'dataset']
+const NOTIFICATION_SEVERITIES = ['info', 'low', 'medium', 'high', 'critical']
+
+interface NotificationPreferences {
+  categories: string[]
+  minimum_severity: string
+}
+
 export function NotificationsPage() {
-  const { user } = useAuth()
   const [items, setItems] = useState<NotificationItem[]>([])
   const [total, setTotal] = useState(0)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -45,6 +59,10 @@ export function NotificationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [filterRead, setFilterRead] = useState<string>('all')
   const [filterCat, setFilterCat] = useState<string>('all')
+  const [preferences, setPreferences] = useState<NotificationPreferences | null>(null)
+  const [preferencesError, setPreferencesError] = useState<string | null>(null)
+  const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null)
+  const [savingPreferences, setSavingPreferences] = useState(false)
 
   const loadNotifications = useCallback(async () => {
     setLoading(true)
@@ -73,6 +91,35 @@ export function NotificationsPage() {
     const timer = setInterval(loadNotifications, 30_000)
     return () => clearInterval(timer)
   }, [loadNotifications])
+
+  useEffect(() => {
+    api.get<NotificationPreferences>('/analyst/notification-preferences')
+      .then((value) => {
+        setPreferences(value)
+        setPreferencesError(null)
+      })
+      .catch((err) => setPreferencesError(errorMessage(err)))
+  }, [])
+
+  const savePreferences = async () => {
+    if (!preferences) return
+    setSavingPreferences(true)
+    setPreferencesError(null)
+    setPreferencesMessage(null)
+    try {
+      const updated = await api.put<NotificationPreferences>(
+        '/analyst/notification-preferences',
+        preferences,
+      )
+      setPreferences(updated)
+      setPreferencesMessage('In-app notification preferences saved.')
+      await loadNotifications()
+    } catch (err) {
+      setPreferencesError(errorMessage(err))
+    } finally {
+      setSavingPreferences(false)
+    }
+  }
 
   const handleMarkRead = async (id: string) => {
     try {
@@ -127,6 +174,74 @@ export function NotificationsPage() {
         </div>
       )}
 
+      <Card className="mb-4">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Settings2 className="h-4 w-4 text-primary" />
+            In-app notification preferences
+          </CardTitle>
+          <CardDescription>
+            Choose which notification categories appear in your feed and the lowest severity to show.
+            These preferences do not send email or external notifications.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {preferencesError && (
+            <InlineAlert variant="error" title="Could not load or save preferences">
+              {preferencesError}
+            </InlineAlert>
+          )}
+          {preferencesMessage && <p className="text-xs text-emerald-400">{preferencesMessage}</p>}
+          {preferences ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {NOTIFICATION_CATEGORIES.map((category) => (
+                  <label key={category} className="flex items-center gap-2 rounded-md border border-border/60 p-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={preferences.categories.includes(category)}
+                      onChange={(event) => {
+                        setPreferencesMessage(null)
+                        setPreferences((current) => {
+                          if (!current) return current
+                          const categories = event.target.checked
+                            ? [...current.categories, category]
+                            : current.categories.filter((item) => item !== category)
+                          return { ...current, categories }
+                        })
+                      }}
+                      className="accent-primary"
+                    />
+                    <span className="capitalize">{CATEGORY_MAP[category].label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <label className="w-[180px] text-xs">
+                  <span className="label-xs mb-1 block">Minimum severity</span>
+                  <Select
+                    value={preferences.minimum_severity}
+                    onChange={(event) => {
+                      setPreferences({ ...preferences, minimum_severity: event.target.value })
+                      setPreferencesMessage(null)
+                    }}
+                  >
+                    {NOTIFICATION_SEVERITIES.map((severity) => (
+                      <option key={severity} value={severity}>{severity}</option>
+                    ))}
+                  </Select>
+                </label>
+                <Button size="sm" onClick={savePreferences} disabled={savingPreferences}>
+                  {savingPreferences ? 'Saving…' : 'Save preferences'}
+                </Button>
+              </div>
+            </>
+          ) : !preferencesError ? (
+            <p className="text-xs text-muted-foreground">Loading preferences…</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
       {/* Counters */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-6">
         <StatCard
@@ -176,12 +291,9 @@ export function NotificationsPage() {
                 className="w-[180px] text-xs"
               >
                 <option value="all">All Categories</option>
-                <option value="critical_alert">Critical Alerts</option>
-                <option value="high_alert">High Alerts</option>
-                <option value="investigation_update">Case Updates</option>
-                <option value="system_warning">System Warnings</option>
-                <option value="model_update">Model Updates</option>
-                <option value="configuration_change">Config Changes</option>
+                {NOTIFICATION_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{CATEGORY_MAP[category].label}</option>
+                ))}
               </Select>
             </div>
 

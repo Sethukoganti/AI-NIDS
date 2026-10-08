@@ -384,6 +384,13 @@ class NotificationPage(BaseModel):
     severities: list[str] = []
 
 
+class NotificationPreferences(BaseModel):
+    categories: list[Literal["alert", "network", "model", "system", "user", "dataset"]] = Field(
+        default_factory=lambda: ["alert", "network", "model", "system", "user", "dataset"]
+    )
+    minimum_severity: Literal["info", "low", "medium", "high", "critical"] = "info"
+
+
 class ModelDeployRequest(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=500)

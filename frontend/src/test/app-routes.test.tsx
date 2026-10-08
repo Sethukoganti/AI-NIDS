@@ -24,6 +24,10 @@ describe('application routes', () => {
   it.each([
     ['/capture', 'Live Network Capture'],
     ['/simulation', 'Attack Simulation'],
+    ['/dashboard', 'Overview'],
+    ['/detections', 'Detection Results'],
+    ['/notifications', 'Security Notifications'],
+    ['/settings', 'Access denied'],
   ])('renders the page at %s', async (path, heading) => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('backend unavailable')))
 
@@ -40,6 +44,14 @@ describe('application routes', () => {
     expect(await screen.findByRole('heading', { name: /sign in to ai-nids/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
+  })
+
+  it('offers PDF export from detection results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('backend unavailable')))
+
+    renderApp('/detections')
+
+    expect(await screen.findByRole('button', { name: /save pdf/i })).toBeInTheDocument()
   })
 
   it('signs out the current user and returns to sign-in', async () => {

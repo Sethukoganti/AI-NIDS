@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
+  Bookmark,
   BrainCircuit,
+  CheckCircle2,
   FileUp,
   Gauge,
   HelpCircle,
@@ -12,11 +14,12 @@ import {
   ShieldAlert,
   Target,
   TrendingUp,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { Select } from '@/components/ui/input'
+import { Input, Select } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert as InlineAlert, KeyValue, Loading, PageHeader, RiskBadge, StatCard, StatusBadge } from '@/components/common'
@@ -28,6 +31,7 @@ import { useCountUp } from '@/hooks/useCountUp'
 import { api, errorMessage } from '@/lib/api'
 import { cn, formatNumber, formatPercent, relativeTime } from '@/lib/format'
 import type { DashboardStats } from '@/lib/types'
+import { useAuth } from '@/context/AuthContext'
 
 // ---- Network status types (analyst read-only view) ----
 interface NetworkStatusSummary {
@@ -110,9 +114,53 @@ const WINDOWS = [
   { value: '0', label: 'All time' },
 ]
 
+interface ModelMonitoring {
+  total_predictions: number
+  average_confidence: number
+  low_confidence_percent: number
+  labeled_predictions: number
+  labeled_accuracy: number | null
+  previous_average_confidence: number | null
+  confidence_change: number | null
+  class_distribution: Record<string, number>
+  daily: { day: string; predictions: number; average_confidence: number; low_confidence: number }[]
+}
+
+interface SavedDashboardView {
+  id: string
+  name: string
+  hours: string
+}
+
+function readSavedViews(userId: string | undefined): SavedDashboardView[] {
+  if (!userId) return []
+  try {
+    const stored = localStorage.getItem(`ainids-dashboard-views:${userId}`)
+    const parsed: unknown = stored ? JSON.parse(stored) : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is SavedDashboardView =>
+      typeof item?.id === 'string' &&
+      typeof item?.name === 'string' &&
+      typeof item?.hours === 'string' &&
+      WINDOWS.some((window) => window.value === item.hours),
+    )
+  } catch {
+    return []
+  }
+}
+
 export function Dashboard() {
+  const { user } = useAuth()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [window, setWindow] = useState('24')
+  const [savedViews, setSavedViews] = useState<SavedDashboardView[]>(() => readSavedViews(user?.id))
+  const [savedViewsUserId, setSavedViewsUserId] = useState<string | undefined>(user?.id)
+  const [savedViewError, setSavedViewError] = useState<string | null>(null)
+  const [saveViewOpen, setSaveViewOpen] = useState(false)
+  const [viewName, setViewName] = useState('')
+  const [selectedSavedView, setSelectedSavedView] = useState('')
+  const [modelMonitoring, setModelMonitoring] = useState<ModelMonitoring | null>(null)
+  const [monitoringError, setMonitoringError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -129,9 +177,49 @@ export function Dashboard() {
     }
   }, [window])
 
+  const loadModelMonitoring = useCallback(async () => {
+    try {
+      const data = await api.get<ModelMonitoring>('/dashboard/model-monitoring?hours=168')
+      setModelMonitoring(data)
+      setMonitoringError(null)
+    } catch (err) {
+      setMonitoringError(errorMessage(err))
+    }
+  }, [])
+
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    setSavedViews(readSavedViews(user?.id))
+    setSavedViewsUserId(user?.id)
+    setSelectedSavedView('')
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!user?.id || savedViewsUserId !== user.id) return
+    try {
+      localStorage.setItem(`ainids-dashboard-views:${user.id}`, JSON.stringify(savedViews))
+      setSavedViewError(null)
+    } catch {
+      setSavedViewError('Saved views could not be stored in this browser.')
+    }
+  }, [savedViews, savedViewsUserId, user?.id])
+
+  useEffect(() => {
+    loadModelMonitoring()
+  }, [loadModelMonitoring])
+
+  const saveDashboardView = () => {
+    const name = viewName.trim()
+    if (!name) return
+    const saved = { id: `${Date.now()}`, name, hours: window }
+    setSavedViews((previous) => [...previous.filter((view) => view.name.toLowerCase() !== name.toLowerCase()), saved])
+    setSelectedSavedView(saved.id)
+    setViewName('')
+    setSaveViewOpen(false)
+  }
 
   const running = stats?.last_job?.status === 'running' || stats?.last_job?.status === 'queued'
 
@@ -143,14 +231,91 @@ export function Dashboard() {
         icon={Gauge}
         actions={
           <>
-            <Select value={window} onChange={(e) => setWindow(e.target.value)} className="w-[150px]">
+            <Select
+              value={window}
+              onChange={(e) => {
+                setWindow(e.target.value)
+                setSelectedSavedView('')
+              }}
+              className="w-[150px]"
+            >
               {WINDOWS.map((w) => (
                 <option key={w.value} value={w.value}>
                   {w.label}
                 </option>
               ))}
             </Select>
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            {savedViews.length > 0 && (
+              <Select
+                aria-label="Saved dashboard views"
+                value={selectedSavedView}
+                onChange={(e) => {
+                  const view = savedViews.find((item) => item.id === e.target.value)
+                  if (view) {
+                    setWindow(view.hours)
+                    setSelectedSavedView(view.id)
+                  }
+                }}
+                className="w-[150px]"
+              >
+                <option value="">Saved views</option>
+                {savedViews.map((view) => (
+                  <option key={view.id} value={view.id}>{view.name}</option>
+                ))}
+              </Select>
+            )}
+            {saveViewOpen ? (
+              <form
+                className="flex items-center gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  saveDashboardView()
+                }}
+              >
+                <Input
+                  aria-label="Dashboard view name"
+                  autoFocus
+                  maxLength={40}
+                  value={viewName}
+                  onChange={(event) => setViewName(event.target.value)}
+                  placeholder="View name"
+                  className="w-[120px]"
+                />
+                <Button size="sm" type="submit" disabled={!viewName.trim()} title="Save dashboard view">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                </Button>
+                <Button size="icon" variant="ghost" type="button" onClick={() => setSaveViewOpen(false)} title="Cancel">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </form>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setSaveViewOpen(true)} title="Save this time window">
+                <Bookmark className="h-3.5 w-3.5" />
+                Save view
+              </Button>
+            )}
+            {selectedSavedView && (
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Delete selected saved view"
+                onClick={() => {
+                  setSavedViews((previous) => previous.filter((view) => view.id !== selectedSavedView))
+                  setSelectedSavedView('')
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void load()
+                void loadModelMonitoring()
+              }}
+              disabled={loading}
+            >
               <RefreshCw className={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
               Refresh
             </Button>
@@ -163,6 +328,13 @@ export function Dashboard() {
           </>
         }
       />
+      {savedViewError && (
+        <div className="mb-4">
+          <InlineAlert variant="error" title="Could not save dashboard view">
+            {savedViewError}
+          </InlineAlert>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4">
@@ -277,6 +449,82 @@ export function Dashboard() {
           </div>
 
           <NetworkStatusCard />
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BrainCircuit className="h-4 w-4 text-primary" />
+                Model Monitoring
+              </CardTitle>
+              <CardDescription>
+                Operational confidence, prediction volume, and labeled-flow accuracy over the last 7 days.
+                Confidence is not a substitute for verified model accuracy.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {monitoringError ? (
+                <InlineAlert variant="error" title="Could not load model monitoring">
+                  {monitoringError}
+                </InlineAlert>
+              ) : modelMonitoring ? (
+                <>
+                  <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-border/70 p-3">
+                      <div className="label-xs">Predictions</div>
+                      <div className="mt-1 text-lg font-semibold">{formatNumber(modelMonitoring.total_predictions)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/70 p-3">
+                      <div className="label-xs">Average confidence</div>
+                      <div className="mt-1 text-lg font-semibold">{formatPercent(modelMonitoring.average_confidence, 1)}</div>
+                      {modelMonitoring.confidence_change !== null && (
+                        <div className="text-[10px] text-muted-foreground">
+                          {modelMonitoring.confidence_change >= 0 ? '+' : ''}
+                          {formatPercent(modelMonitoring.confidence_change, 1)} vs previous 7 days
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-lg border border-border/70 p-3">
+                      <div className="label-xs">Below 60% confidence</div>
+                      <div className="mt-1 text-lg font-semibold">{formatPercent(modelMonitoring.low_confidence_percent, 1)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/70 p-3">
+                      <div className="label-xs">Labeled accuracy</div>
+                      <div className="mt-1 text-lg font-semibold">
+                        {modelMonitoring.labeled_accuracy === null ? 'Not available' : formatPercent(modelMonitoring.labeled_accuracy, 1)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatNumber(modelMonitoring.labeled_predictions)} flows with ground truth
+                      </div>
+                    </div>
+                  </div>
+                  {modelMonitoring.daily.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                      {modelMonitoring.daily.map((day) => (
+                        <div key={day.day} className="rounded-lg bg-muted/30 px-3 py-2 text-xs">
+                          <div className="font-medium">{day.day}</div>
+                          <div className="mt-1 text-muted-foreground">
+                            {formatNumber(day.predictions)} predictions · {formatPercent(day.average_confidence, 1)} avg confidence
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No prediction activity in the last 7 days.</p>
+                  )}
+                  {Object.keys(modelMonitoring.class_distribution).length > 0 && (
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      Most common predictions:{' '}
+                      {Object.entries(modelMonitoring.class_distribution)
+                        .map(([name, count]) => `${name} (${formatNumber(count)})`)
+                        .join(' · ')}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">Loading model health metrics…</p>
+              )}
+            </CardContent>
+          </Card>
 
           <Reveal>
             <div className="grid gap-3 xl:grid-cols-3">

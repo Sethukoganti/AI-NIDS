@@ -105,6 +105,30 @@ def create_for_alerts(db: Session, alerts: Iterable, runtime: Any | None = None)
     return created
 
 
+def get_preferences(user: User) -> dict:
+    stored = (user.preferences or {}).get("notifications", {})
+    categories = stored.get("categories", list(CATEGORIES))
+    if not isinstance(categories, list):
+        categories = list(CATEGORIES)
+    categories = [category for category in CATEGORIES if category in categories]
+    minimum_severity = stored.get("minimum_severity", "info")
+    if minimum_severity not in SEVERITIES:
+        minimum_severity = "info"
+    return {"categories": categories, "minimum_severity": minimum_severity}
+
+
+def update_preferences(db: Session, user: User, preferences: dict) -> dict:
+    existing = dict(user.preferences or {})
+    existing["notifications"] = {
+        "categories": [category for category in CATEGORIES if category in preferences["categories"]],
+        "minimum_severity": preferences["minimum_severity"],
+    }
+    user.preferences = existing
+    db.add(user)
+    db.flush()
+    return get_preferences(user)
+
+
 def list_notifications(
     db: Session,
     *,
@@ -116,29 +140,28 @@ def list_notifications(
     page_size: int = 25,
 ) -> dict:
     """Notifications visible to ``user``: everything not role-restricted, plus theirs."""
+    visible_to_user = and_(
+        or_(
+            Notification.target_role.is_(None),
+            Notification.target_role == user.role,
+        ),
+        or_(
+            Notification.target_user.is_(None),
+            Notification.target_user == str(user.id),
+        ),
+    )
+    preferences = get_preferences(user)
+    minimum_index = SEVERITIES.index(preferences["minimum_severity"])
+    allowed_severities = SEVERITIES[minimum_index:]
     stmt = select(Notification).where(
-        and_(
-            or_(
-                Notification.target_role.is_(None),
-                Notification.target_role == user.role,
-            ),
-            or_(
-                Notification.target_user.is_(None),
-                Notification.target_user == str(user.id),
-            ),
-        )
+        visible_to_user,
+        Notification.category.in_(preferences["categories"]),
+        Notification.severity.in_(allowed_severities),
     )
     count_stmt = select(func.count(Notification.id)).where(
-        and_(
-            or_(
-                Notification.target_role.is_(None),
-                Notification.target_role == user.role,
-            ),
-            or_(
-                Notification.target_user.is_(None),
-                Notification.target_user == str(user.id),
-            ),
-        )
+        visible_to_user,
+        Notification.category.in_(preferences["categories"]),
+        Notification.severity.in_(allowed_severities),
     )
     if is_read is not None:
         stmt = stmt.where(Notification.is_read.is_(is_read))
@@ -160,16 +183,9 @@ def list_notifications(
         db.scalar(
             select(func.count(Notification.id)).where(
                 Notification.is_read.is_(False),
-                and_(
-                    or_(
-                        Notification.target_role.is_(None),
-                        Notification.target_role == user.role,
-                    ),
-                    or_(
-                        Notification.target_user.is_(None),
-                        Notification.target_user == str(user.id),
-                    ),
-                ),
+                visible_to_user,
+                Notification.category.in_(preferences["categories"]),
+                Notification.severity.in_(allowed_severities),
             )
         )
         or 0

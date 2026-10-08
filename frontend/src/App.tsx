@@ -1,8 +1,12 @@
 import { Route, Routes, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, Bot, Brain, Info, LogOut, Radio, Send, ShieldCheck, Sparkles, Wifi, X, Zap } from 'lucide-react'
+import { Activity, Bell, Bot, Brain, Info, LayoutDashboard, LogOut, Radio, Send, Settings, ShieldAlert, ShieldCheck, Sparkles, Wifi, X, Zap } from 'lucide-react'
 import { About } from '@/pages/About'
+import { Dashboard } from '@/pages/Dashboard'
+import { Detections } from '@/pages/Detections'
 import { LiveCapture } from '@/pages/LiveCapture'
 import { Login } from '@/pages/Login'
+import { NotificationsPage } from '@/pages/NotificationsPage'
+import SettingsCenter from '@/pages/SettingsCenter'
 import { Simulation } from '@/pages/Simulation'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/format'
@@ -200,7 +204,57 @@ function Shell() {
           </div>
 
           {/* Navigation tabs */}
-          <nav className="flex items-center gap-1 rounded-xl border border-border/60 bg-background/40 p-1">
+          <nav className="flex max-w-[58vw] items-center gap-1 overflow-x-auto rounded-xl border border-border/60 bg-background/40 p-1 print:hidden">
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) => cn(
+                'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200',
+                isActive
+                  ? 'bg-primary text-primary-foreground shadow-[0_0_16px_rgba(34,211,238,0.3)]'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
+            >
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              Dashboard
+            </NavLink>
+            <NavLink
+              to="/detections"
+              className={({ isActive }) => cn(
+                'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200',
+                isActive
+                  ? 'bg-primary text-primary-foreground shadow-[0_0_16px_rgba(34,211,238,0.3)]'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Detections
+            </NavLink>
+            <NavLink
+              to="/notifications"
+              className={({ isActive }) => cn(
+                'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200',
+                isActive
+                  ? 'bg-primary text-primary-foreground shadow-[0_0_16px_rgba(34,211,238,0.3)]'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
+            >
+              <Bell className="h-3.5 w-3.5" />
+              Alerts
+            </NavLink>
+            {user?.role === 'admin' && (
+              <NavLink
+                to="/settings"
+                className={({ isActive }) => cn(
+                  'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200',
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-[0_0_16px_rgba(34,211,238,0.3)]'
+                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                )}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Settings
+              </NavLink>
+            )}
             <NavLink
               to="/about"
               className={({ isActive }) => cn(
@@ -283,6 +337,10 @@ function Shell() {
         <div className="relative mx-auto max-w-[1500px] p-4 lg:p-6">
           <Routes>
             <Route path="/about"      element={<About />} />
+            <Route path="/dashboard"  element={<Dashboard />} />
+            <Route path="/detections" element={<Detections />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/settings" element={<SettingsCenter />} />
             <Route path="/capture"    element={<LiveCapture />} />
             <Route path="/simulation" element={<Simulation />} />
             <Route path="*"           element={<Navigate to="/about" replace />} />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Eye, Filter, Info, Search, ShieldAlert, SlidersHorizontal } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Eye, Filter, Info, Printer, Search, ShieldAlert, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Select } from '@/components/ui/input'
@@ -104,6 +104,16 @@ export function Predictions() {
         subtitle="Every flow the Random Forest scored. Each row is one network connection — click Inspect to see exactly why the model made its decision."
         actions={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.print()}
+              disabled={!data}
+              title="Print this filtered report or save it as a PDF"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              Save PDF
+            </Button>
             <Select
               value={String(pageSize)}
               onChange={(e) => {
@@ -124,6 +134,13 @@ export function Predictions() {
           </>
         }
       />
+
+      <p className="mb-3 hidden text-xs text-muted-foreground print:block">
+        Generated {new Date().toLocaleString()} · {jobSummary?.dataset_filename ?? 'All stored analysis'} ·
+        {' '}PDF contains page {page} ({rows.length} flow(s)); {formatNumber(data?.total ?? 0)} flow(s) match the
+        {' '}filters across all pages. Filters: {verdict}, {risk} risk, {attackType} attack type
+        {minConfidence ? `, at least ${minConfidence}% confidence` : ''}{search ? `, search “${search}”` : ''}.
+      </p>
 
       {/* Job summary banner — shown when opened directly from the analyzer */}
       {jobSummary?.summary && (() => {
@@ -215,7 +232,7 @@ export function Predictions() {
         </div>
       )}
 
-      <Card className="mb-4">
+      <Card className="mb-4 print:hidden">
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
           <div className="min-w-[140px] flex-1">
             <label className="label-xs mb-1 block">

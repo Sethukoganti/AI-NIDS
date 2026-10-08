@@ -108,6 +108,23 @@ def test_dashboard_alert_aggregates_are_consistent(client, auth):
     assert stats["verdict_share"]["normal_pct"] + stats["verdict_share"]["suspicious_pct"] == 100.0 or True
 
 
+def test_model_monitoring_reports_recent_confidence_and_class_trends(client, auth):
+    response = client.get("/api/dashboard/model-monitoring?hours=168", headers=auth)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["window_hours"] == 168
+    assert data["total_predictions"] >= 0
+    assert 0 <= data["average_confidence"] <= 1
+    assert 0 <= data["low_confidence_percent"] <= 1
+    assert isinstance(data["class_distribution"], dict)
+    assert isinstance(data["daily"], list)
+    assert all(
+        {"day", "predictions", "average_confidence", "low_confidence"} <= point.keys()
+        for point in data["daily"]
+    )
+    assert data["labeled_accuracy"] is None or 0 <= data["labeled_accuracy"] <= 1
+
+
 def test_no_duplicate_alert_pairs_across_every_job(client, admin_auth):
     """
     Global flood-control invariant, checked over every alert in the database:
