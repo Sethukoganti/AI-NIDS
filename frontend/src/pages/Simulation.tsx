@@ -42,6 +42,8 @@ interface SimulateResult {
   }
 }
 
+type FlowView = 'threats' | 'normal' | 'blocked' | 'removed'
+
 export function Simulation() {
   const { isAdmin } = useAuth()
   const [samples, setSamples] = useState<SampleOption[]>([])
@@ -49,12 +51,17 @@ export function Simulation() {
   const [rows, setRows] = useState(120)
   const [running, setRunning] = useState(false)
   const [flows, setFlows] = useState<ScoredFlow[]>([])
+  const [removedFlows, setRemovedFlows] = useState<ScoredFlow[]>([])
+  const [blockedFlows, setBlockedFlows] = useState<ScoredFlow[]>([])
+  const [blockedRuleIds, setBlockedRuleIds] = useState<Record<number, string>>({})
+  const [flowView, setFlowView] = useState<FlowView | null>(null)
   const [totalSeen, setTotalSeen] = useState(0)
   const [suspiciousSeen, setSuspiciousSeen] = useState(0)
   const [removedThreats, setRemovedThreats] = useState<Set<number>>(() => new Set())
   const [removedCount, setRemovedCount] = useState(0)
   const [blockedThreats, setBlockedThreats] = useState<Set<number>>(() => new Set())
   const [blockingFlowIndex, setBlockingFlowIndex] = useState<number | null>(null)
+  const [unblockingFlowIndex, setUnblockingFlowIndex] = useState<number | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [startInfo, setStartInfo] = useState<Record<string, unknown> | null>(null)
   const [done, setDone] = useState<StreamDone | null>(null)
@@ -86,6 +93,7 @@ export function Simulation() {
   const start = async () => {
     stop()
     setFlows([]); setDone(null); setError(null); setStartInfo(null); setPersistResult(null)
+    setRemovedFlows([]); setBlockedFlows([]); setBlockedRuleIds({}); setFlowView(null)
     setTotalSeen(0); setSuspiciousSeen(0)
     setRemovedThreats(new Set())
     setRemovedCount(0); setBlockedThreats(new Set()); setActionNotice(null)
@@ -148,6 +156,7 @@ export function Simulation() {
   const handleRemoveFlow = (flow: ScoredFlow) => {
     if (!isAdmin) return
     setFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedFlows(current => [...current, flow])
     setRemovedCount(count => count + 1)
     if (flow.is_attack) {
       setRemovedThreats(current => new Set(current).add(flow.index))
@@ -162,13 +171,15 @@ export function Simulation() {
     setError(null)
     setActionNotice(null)
     setBlockedThreats(current => new Set(current).add(flow.index))
+    setBlockedFlows(current => [...current, flow])
     setFlows(current => current.filter(item => item.index !== flow.index))
     try {
       if (flow.source_ip && isAdmin) {
-        await api.post('/admin/network/blocks', {
+        const result = await api.post<{ rule: { id: string } }>('/admin/network/blocks', {
           network: flow.source_ip,
           reason: `Attack simulation intrusion: ${flow.prediction} (flow #${flow.index})`,
         })
+        setBlockedRuleIds(current => ({ ...current, [flow.index]: result.rule.id }))
       }
       setActionNotice(
         flow.source_ip && isAdmin
@@ -184,6 +195,62 @@ export function Simulation() {
       setBlockingFlowIndex(null)
     }
   }
+
+  const handleUnblockIntrusion = async (flow: ScoredFlow) => {
+    if (!isAdmin) return
+    setUnblockingFlowIndex(flow.index)
+    setError(null)
+    try {
+      const ruleId = blockedRuleIds[flow.index]
+      if (ruleId) await api.del(`/admin/network/blocks/${ruleId}`)
+      setBlockedFlows(current => current.filter(item => item.index !== flow.index))
+      setBlockedThreats(current => {
+        const next = new Set(current)
+        next.delete(flow.index)
+        return next
+      })
+      setBlockedRuleIds(current => {
+        const next = { ...current }
+        delete next[flow.index]
+        return next
+      })
+      setFlows(current => [...current, flow])
+      setFlowView('threats')
+      setActionNotice(
+        ruleId
+          ? `Unblocked ${flow.prediction} (flow #${flow.index}) and released its analysis policy.`
+          : `Unblocked ${flow.prediction} (flow #${flow.index}) for this simulation run.`,
+      )
+    } catch (err) {
+      setError(`Could not unblock the intrusion: ${errorMessage(err)}`)
+    } finally {
+      setUnblockingFlowIndex(null)
+    }
+  }
+
+  const handleRestoreFlow = (flow: ScoredFlow) => {
+    if (!isAdmin) return
+    setRemovedFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedCount(count => Math.max(0, count - 1))
+    setRemovedThreats(current => {
+      const next = new Set(current)
+      next.delete(flow.index)
+      return next
+    })
+    setFlows(current => [...current, flow])
+    setFlowView(flow.is_attack ? 'threats' : 'normal')
+    setActionNotice(`Restored ${flow.is_attack ? 'intrusion' : 'connection'} (flow #${flow.index}) to the active list.`)
+  }
+
+  const visibleFlows = flowView === 'threats'
+    ? flows.filter(flow => flow.is_attack)
+    : flowView === 'normal'
+      ? flows.filter(flow => !flow.is_attack)
+      : flowView === 'blocked'
+        ? blockedFlows
+        : flowView === 'removed'
+          ? removedFlows
+          : flows
 
   return (
     <div className="space-y-5">
@@ -272,19 +339,19 @@ export function Simulation() {
         <div className="space-y-2">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {[
-            { label: 'Flows processed', value: totalSeen, hint: `of ${rows} requested`, icon: <Activity className="h-4 w-4" />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20' },
-            { label: 'Threats found', value: visibleSuspicious, hint: totalSeen ? `${formatPercent(visibleSuspicious / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400', bg: visibleSuspicious > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20' },
-            { label: 'Normal traffic', value: Math.max(totalSeen - suspiciousSeen, 0), hint: 'no action needed', icon: <ShieldCheck className="h-4 w-4" />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'Flows processed', value: totalSeen, hint: `of ${rows} requested`, icon: <Activity className="h-4 w-4" />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20', view: null },
+            { label: 'Threats found', value: visibleSuspicious, hint: totalSeen ? `${formatPercent(visibleSuspicious / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400', bg: visibleSuspicious > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20', view: 'threats' as const },
+            { label: 'Normal traffic', value: Math.max(totalSeen - suspiciousSeen, 0), hint: 'no action needed', icon: <ShieldCheck className="h-4 w-4" />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', view: 'normal' as const },
             ...(isAdmin ? [
-              { label: 'Blocked intrusions', value: blockedThreats.size, hint: 'handled this run', icon: <Ban className="h-4 w-4" />, color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
-              { label: 'Removed connections', value: removedCount, hint: 'hidden from this list', icon: <CircleStop className="h-4 w-4" />, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border/50' },
+              { label: 'Blocked intrusions', value: blockedFlows.length, hint: 'handled this run', icon: <Ban className="h-4 w-4" />, color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20', view: 'blocked' as const },
+              { label: 'Removed connections', value: removedFlows.length, hint: 'hidden from this list', icon: <CircleStop className="h-4 w-4" />, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border/50', view: 'removed' as const },
             ] : []),
-          ].map(({ label, value, hint, icon, color, bg }) => (
-            <div key={label} className={cn('rounded-xl border p-4', bg)}>
+          ].map(({ label, value, hint, icon, color, bg, view }) => (
+            <button key={label} type="button" onClick={() => setFlowView(view)} className={cn('rounded-xl border p-4 text-left transition-colors hover:border-primary/40', bg)}>
               <div className={cn('flex items-center gap-2 mb-2', color)}>{icon}<span className="text-xs font-semibold uppercase tracking-wide">{label}</span></div>
               <div className={cn('text-3xl font-bold tabular-nums', color)}>{formatNumber(value)}</div>
               {hint && <div className="mt-1 text-[11px] text-muted-foreground">{hint}</div>}
-            </div>
+            </button>
           ))}
         </div>
         {isAdmin && (
@@ -297,20 +364,31 @@ export function Simulation() {
 
       {/* ══ Threat feed ═════════════════════════════════════════════════════ */}
       {(running || totalSeen > 0) && (
+        <>
+        {flowView && (
+          <div className="flex items-center justify-between rounded-lg border border-border/60 bg-panel/40 px-3 py-2 text-xs">
+            <span className="text-muted-foreground">Showing {flowView} flows</span>
+            <Button size="sm" variant="outline" onClick={() => setFlowView(null)}>Show all flows</Button>
+          </div>
+        )}
         <ThreatFeed
-          flows={flows}
+          flows={visibleFlows}
           streaming={running}
           total={totalSeen}
           suspicious={visibleSuspicious}
-          removedThreats={isAdmin ? removedThreats.size : 0}
-          blockedThreats={isAdmin ? blockedThreats.size : 0}
+          removedThreats={isAdmin ? removedFlows.length : 0}
+          blockedThreats={isAdmin ? blockedFlows.length : 0}
           onRemoveFlow={isAdmin ? handleRemoveFlow : undefined}
           onBlockIntrusion={isAdmin ? handleBlockIntrusion : undefined}
-          blockedThreatIndexes={isAdmin ? [...blockedThreats] : []}
+          onUnblockIntrusion={isAdmin && flowView === 'blocked' ? handleUnblockIntrusion : undefined}
+          unblockingFlowIndex={isAdmin ? unblockingFlowIndex : null}
+          onRestoreFlow={isAdmin && flowView === 'removed' ? handleRestoreFlow : undefined}
+          blockedThreatIndexes={isAdmin && flowView === 'blocked' ? blockedFlows.map(flow => flow.index) : []}
           blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
           emptyMessage='Click "Run simulation" to replay CICIDS2017 attack flows.'
           waitingMessage="Streaming flows through the model…"
         />
+        </>
       )}
 
       {/* ══ Empty state ═════════════════════════════════════════════════════ */}

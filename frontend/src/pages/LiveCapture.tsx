@@ -45,6 +45,8 @@ interface SessionSummary {
   durationSec: number
 }
 
+type FlowView = 'threats' | 'normal' | 'blocked' | 'removed'
+
 // ── Animated counter ───────────────────────────────────────────────────── //
 function AnimatedNumber({ value, className }: { value: number; className?: string }) {
   return <span className={className}>{formatNumber(value)}</span>
@@ -59,6 +61,10 @@ export function LiveCapture() {
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [flows, setFlows] = useState<ScoredFlow[]>([])
+  const [removedFlows, setRemovedFlows] = useState<ScoredFlow[]>([])
+  const [blockedFlows, setBlockedFlows] = useState<ScoredFlow[]>([])
+  const [blockedRuleIds, setBlockedRuleIds] = useState<Record<number, string>>({})
+  const [flowView, setFlowView] = useState<FlowView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [suspicious, setSuspicious] = useState(0)
@@ -66,6 +72,7 @@ export function LiveCapture() {
   const [removedCount, setRemovedCount] = useState(0)
   const [blockedThreats, setBlockedThreats] = useState<Set<number>>(() => new Set())
   const [blockingFlowIndex, setBlockingFlowIndex] = useState<number | null>(null)
+  const [unblockingFlowIndex, setUnblockingFlowIndex] = useState<number | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
   const [sessionStartTime, setSessionStartTime] = useState(0)
@@ -109,6 +116,7 @@ export function LiveCapture() {
   const handleStart = async () => {
     setError(null); setStarting(true)
     setFlows([]); setTotal(0); setSuspicious(0); setSessionSummary(null); setElapsedSec(0)
+    setRemovedFlows([]); setBlockedFlows([]); setBlockedRuleIds({}); setFlowView(null)
     setRemovedThreats(new Set())
     setRemovedCount(0); setBlockedThreats(new Set()); setActionNotice(null)
     try {
@@ -210,6 +218,7 @@ export function LiveCapture() {
   const handleRemoveFlow = (flow: ScoredFlow) => {
     if (!isAdmin) return
     setFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedFlows(current => [...current, flow])
     setRemovedCount(count => count + 1)
     if (flow.is_attack) {
       setRemovedThreats(current => new Set(current).add(flow.index))
@@ -225,13 +234,15 @@ export function LiveCapture() {
     setError(null)
     setActionNotice(null)
     setBlockedThreats(current => new Set(current).add(flow.index))
+    setBlockedFlows(current => [...current, flow])
     setFlows(current => current.filter(item => item.index !== flow.index))
     try {
       if (flow.source_ip && isAdmin) {
-        await api.post('/admin/network/blocks', {
+        const result = await api.post<{ rule: { id: string } }>('/admin/network/blocks', {
           network: flow.source_ip,
           reason: `Live capture intrusion: ${flow.prediction} (flow #${flow.index})`,
         })
+        setBlockedRuleIds(current => ({ ...current, [flow.index]: result.rule.id }))
       }
       setActionNotice(
         flow.source_ip && isAdmin
@@ -247,6 +258,62 @@ export function LiveCapture() {
       setBlockingFlowIndex(null)
     }
   }
+
+  const handleUnblockIntrusion = async (flow: ScoredFlow) => {
+    if (!isAdmin) return
+    setUnblockingFlowIndex(flow.index)
+    setError(null)
+    try {
+      const ruleId = blockedRuleIds[flow.index]
+      if (ruleId) await api.del(`/admin/network/blocks/${ruleId}`)
+      setBlockedFlows(current => current.filter(item => item.index !== flow.index))
+      setBlockedThreats(current => {
+        const next = new Set(current)
+        next.delete(flow.index)
+        return next
+      })
+      setBlockedRuleIds(current => {
+        const next = { ...current }
+        delete next[flow.index]
+        return next
+      })
+      setFlows(current => [...current, flow])
+      setFlowView('threats')
+      setActionNotice(
+        ruleId
+          ? `Unblocked ${flow.prediction} (flow #${flow.index}) and released its analysis policy.`
+          : `Unblocked ${flow.prediction} (flow #${flow.index}) for this capture session.`,
+      )
+    } catch (err) {
+      setError(`Could not unblock the intrusion: ${errorMessage(err)}`)
+    } finally {
+      setUnblockingFlowIndex(null)
+    }
+  }
+
+  const handleRestoreFlow = (flow: ScoredFlow) => {
+    if (!isAdmin) return
+    setRemovedFlows(current => current.filter(item => item.index !== flow.index))
+    setRemovedCount(count => Math.max(0, count - 1))
+    setRemovedThreats(current => {
+      const next = new Set(current)
+      next.delete(flow.index)
+      return next
+    })
+    setFlows(current => [...current, flow])
+    setFlowView(flow.is_attack ? 'threats' : 'normal')
+    setActionNotice(`Restored ${flow.is_attack ? 'intrusion' : 'connection'} (flow #${flow.index}) to the active list.`)
+  }
+
+  const visibleFlows = flowView === 'threats'
+    ? flows.filter(flow => flow.is_attack)
+    : flowView === 'normal'
+      ? flows.filter(flow => !flow.is_attack)
+      : flowView === 'blocked'
+        ? blockedFlows
+        : flowView === 'removed'
+          ? removedFlows
+          : flows
 
   const agentRunning = status?.agent_running ?? false
   const modelReady = status?.model_ready ?? false
@@ -359,22 +426,29 @@ export function LiveCapture() {
               </div>
               <div className="flex items-center gap-1.5">
                 <ShieldAlert className="h-3.5 w-3.5 text-orange-400" />
-                <span className="text-muted-foreground">Threats:</span>
-                <span className={cn('font-mono font-bold', visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400')}>
-                  {formatNumber(visibleSuspicious)}
-                </span>
+                <button type="button" onClick={() => setFlowView('threats')} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                  Threats: <span className={cn('font-mono font-bold', visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400')}>{formatNumber(flows.filter(flow => flow.is_attack).length)}</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <button type="button" onClick={() => setFlowView('normal')} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                  Normal: <span className="font-mono font-bold text-emerald-400">{formatNumber(flows.filter(flow => !flow.is_attack).length)}</span>
+                </button>
               </div>
               {isAdmin && (
                 <>
                   <div className="flex items-center gap-1.5" title="Intrusions marked blocked in this capture session; no live traffic is interrupted">
                     <Ban className="h-3.5 w-3.5 text-rose-400" />
-                    <span className="text-muted-foreground">Blocked intrusions:</span>
-                    <span className="font-mono font-bold text-rose-400">{blockedThreats.size}</span>
+                    <button type="button" onClick={() => setFlowView('blocked')} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                      Blocked: <span className="font-mono font-bold text-rose-400">{blockedFlows.length}</span>
+                    </button>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <X className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-muted-foreground">Removed:</span>
-                    <span className="font-mono font-bold text-foreground">{removedCount}</span>
+                    <button type="button" onClick={() => setFlowView('removed')} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                      Removed: <span className="font-mono font-bold text-foreground">{removedFlows.length}</span>
+                    </button>
                   </div>
                 </>
               )}
@@ -469,16 +543,19 @@ export function LiveCapture() {
               {/* Stats row */}
               <div className="flex items-center gap-6 text-center">
                 {[
-                  { label: 'Flows scored', value: sessionSummary.total, color: 'text-primary' },
-                  { label: 'Threats', value: sessionSummary.suspicious, color: sessionSummary.suspicious > 0 ? 'text-orange-400' : 'text-emerald-400' },
-                  { label: 'Safe', value: sessionSummary.safe, color: 'text-emerald-400' },
-                  ...(isAdmin ? [{ label: 'Blocked intrusions', value: blockedThreats.size, color: 'text-rose-400' }] : []),
-                  { label: 'Packets', value: sessionSummary.packetsCaptured, color: 'text-foreground' },
-                ].map(({ label, value, color }) => (
-                  <div key={label}>
+                  { label: 'Flows scored', value: sessionSummary.total, color: 'text-primary', view: null },
+                  { label: 'Threats', value: sessionSummary.suspicious, color: sessionSummary.suspicious > 0 ? 'text-orange-400' : 'text-emerald-400', view: 'threats' as const },
+                  { label: 'Safe', value: sessionSummary.safe, color: 'text-emerald-400', view: 'normal' as const },
+                  ...(isAdmin ? [
+                    { label: 'Blocked intrusions', value: blockedFlows.length, color: 'text-rose-400', view: 'blocked' as const },
+                    { label: 'Removed', value: removedFlows.length, color: 'text-muted-foreground', view: 'removed' as const },
+                  ] : []),
+                  { label: 'Packets', value: sessionSummary.packetsCaptured, color: 'text-foreground', view: null },
+                ].map(({ label, value, color, view }) => (
+                  <button key={label} type="button" disabled={!view} onClick={() => view && setFlowView(view)} className="disabled:cursor-default">
                     <div className={cn('text-2xl font-bold tabular-nums', color)}>{formatNumber(value)}</div>
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-                  </div>
+                    <div className={cn('text-[10px] uppercase tracking-wider text-muted-foreground', view && 'hover:underline')}>{label}</div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -490,21 +567,32 @@ export function LiveCapture() {
       {actionNotice && (
         <Alert variant="success" title="Action completed">{actionNotice}</Alert>
       )}
-      {!npcapMissing && (streaming || flows.length > 0 || blockedThreats.size > 0 || removedCount > 0) && (
+      {!npcapMissing && (streaming || flows.length > 0 || blockedFlows.length > 0 || removedFlows.length > 0 || flowView !== null) && (
+        <>
+        {flowView && (
+          <div className="flex items-center justify-between rounded-lg border border-border/60 bg-panel/40 px-3 py-2 text-xs">
+            <span className="text-muted-foreground">Showing {flowView} flows</span>
+            <Button size="sm" variant="outline" onClick={() => setFlowView(null)}>Show all flows</Button>
+          </div>
+        )}
         <ThreatFeed
-          flows={flows}
+          flows={visibleFlows}
           streaming={streaming}
           total={total}
           suspicious={visibleSuspicious}
-          removedThreats={isAdmin ? removedThreats.size : 0}
-          blockedThreats={isAdmin ? blockedThreats.size : 0}
+          removedThreats={isAdmin ? removedFlows.length : 0}
+          blockedThreats={isAdmin ? blockedFlows.length : 0}
           onRemoveFlow={isAdmin ? handleRemoveFlow : undefined}
           onBlockIntrusion={isAdmin ? handleBlockIntrusion : undefined}
-          blockedThreatIndexes={isAdmin ? [...blockedThreats] : []}
+          onUnblockIntrusion={isAdmin && flowView === 'blocked' ? handleUnblockIntrusion : undefined}
+          unblockingFlowIndex={isAdmin ? unblockingFlowIndex : null}
+          onRestoreFlow={isAdmin && flowView === 'removed' ? handleRestoreFlow : undefined}
+          blockedThreatIndexes={isAdmin && flowView === 'blocked' ? blockedFlows.map(flow => flow.index) : []}
           blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
           emptyMessage='Click "Start live capture" to begin monitoring.'
           waitingMessage="Monitoring… flows appear when TCP connections close or go idle (up to 12s)."
         />
+        </>
       )}
 
       {/* Empty state */}

@@ -2,7 +2,7 @@
  * Shared threat feed components used by both LiveCapture and Simulation pages.
  * Provides: ATTACK_INFO knowledge base, ThreatCard, SafeFlowRow, ThreatFeed
  */
-import { Ban, ClipboardList, Info, ShieldAlert, ShieldCheck, X } from 'lucide-react'
+import { Ban, ClipboardList, Info, RotateCcw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -214,12 +214,18 @@ export function ThreatCard({
   flow,
   onRemove,
   onBlockIntrusion,
+  onUnblockIntrusion,
+  unblocking,
+  onRestore,
   blocked,
   blocking,
 }: {
   flow: ScoredFlow
   onRemove?: (flow: ScoredFlow) => void
   onBlockIntrusion?: (flow: ScoredFlow) => void
+  onUnblockIntrusion?: (flow: ScoredFlow) => void
+  unblocking?: boolean
+  onRestore?: (flow: ScoredFlow) => void
   blocked?: boolean
   blocking?: boolean
 }) {
@@ -244,22 +250,62 @@ export function ThreatCard({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="font-mono text-[10px]">flow #{flow.index}</Badge>
-          {onBlockIntrusion && (
+          {blocked ? onUnblockIntrusion ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={blocked || blocking}
-              aria-label={blocked ? 'Intrusion blocked' : 'Block intrusion'}
+              disabled={unblocking}
+              aria-label="Unblock intrusion"
+              title="Return this intrusion to the active threat list"
+              onClick={() => onUnblockIntrusion(flow)}
+              className="h-7 gap-1 px-2 text-[10px]"
+            >
+              <RotateCcw className="h-3 w-3" />
+              {unblocking ? 'Unblocking…' : 'Unblock'}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled
+              aria-label="Intrusion blocked"
+              title="This intrusion is marked handled for this run"
+              className="h-7 gap-1 px-2 text-[10px]"
+            >
+              <Ban className="h-3 w-3" />
+              Blocked
+            </Button>
+          ) : onBlockIntrusion && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={blocking}
+              aria-label="Block intrusion"
               title="Mark this intrusion as blocked in AI-NIDS. If an IP is available, add it to the analysis blocklist; this does not interrupt network traffic."
               onClick={() => onBlockIntrusion(flow)}
               className="h-7 gap-1 px-2 text-[10px]"
             >
               <Ban className="h-3 w-3" />
-              {blocking ? 'Blocking…' : blocked ? 'Blocked' : 'Block intrusion'}
+              {blocking ? 'Blocking…' : 'Block intrusion'}
             </Button>
           )}
-          {onRemove && (
+          {onRestore ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Restore removed connection"
+              title="Return this connection to the active list"
+              onClick={() => onRestore(flow)}
+              className="h-7 gap-1 px-2 text-[10px]"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Restore
+            </Button>
+          ) : onRemove && (
             <Button
               type="button"
               variant="ghost"
@@ -328,9 +374,11 @@ export function ThreatCard({
 export function SafeFlowRow({
   flow,
   onRemove,
+  onRestore,
 }: {
   flow: ScoredFlow
   onRemove?: (flow: ScoredFlow) => void
+  onRestore?: (flow: ScoredFlow) => void
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px]">
@@ -348,7 +396,20 @@ export function SafeFlowRow({
       <div className="flex items-center gap-2 text-muted-foreground shrink-0">
         <span className="font-mono">{formatPercent(flow.confidence, 0)}</span>
         {flow.protocol && <span>{flow.protocol}</span>}
-        {onRemove && (
+        {onRestore ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label="Restore removed connection"
+            title="Return this connection to the active list"
+            onClick={() => onRestore(flow)}
+            className="h-7 gap-1 px-2 text-[10px]"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Restore
+          </Button>
+        ) : onRemove && (
           <Button
             type="button"
             variant="ghost"
@@ -378,6 +439,9 @@ export function ThreatFeed({
   blockedThreats = 0,
   onRemoveFlow,
   onBlockIntrusion,
+  onUnblockIntrusion,
+  unblockingFlowIndex,
+  onRestoreFlow,
   blockedThreatIndexes = [],
   blockingFlowIndex,
   emptyMessage = 'Click Start to begin monitoring.',
@@ -391,6 +455,9 @@ export function ThreatFeed({
   blockedThreats?: number
   onRemoveFlow?: (flow: ScoredFlow) => void
   onBlockIntrusion?: (flow: ScoredFlow) => void
+  onUnblockIntrusion?: (flow: ScoredFlow) => void
+  unblockingFlowIndex?: number | null
+  onRestoreFlow?: (flow: ScoredFlow) => void
   blockedThreatIndexes?: number[]
   blockingFlowIndex?: number | null
   emptyMessage?: string
@@ -459,6 +526,9 @@ export function ThreatFeed({
                 flow={flow}
                 onRemove={onRemoveFlow}
                 onBlockIntrusion={onBlockIntrusion}
+                onUnblockIntrusion={onUnblockIntrusion}
+                unblocking={unblockingFlowIndex === flow.index}
+                onRestore={onRestoreFlow}
                 blocked={blockedThreatIndexes.includes(flow.index)}
                 blocking={blockingFlowIndex === flow.index}
               />
@@ -492,7 +562,7 @@ export function ThreatFeed({
             ) : (
               <div className="max-h-[300px] overflow-y-auto space-y-1">
                 {safeFlows.slice(0, 40).map((flow, i) => (
-                  <SafeFlowRow key={`safe-${flow.index}-${i}`} flow={flow} onRemove={onRemoveFlow} />
+                <SafeFlowRow key={`safe-${flow.index}-${i}`} flow={flow} onRemove={onRemoveFlow} onRestore={onRestoreFlow} />
                 ))}
                 {safeFlows.length > 40 && (
                   <p className="text-center text-[10px] text-muted-foreground pt-1">

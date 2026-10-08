@@ -15,6 +15,7 @@
 11. MADE SIGN-IN THE OPENING PAGE: the root route now opens the existing sign-in page, with the configured Admin and Analyst demo-account shortcuts
 12. RESTRICTED FLOW ACTIONS BY ROLE: Admin retains remove/block actions in live capture and simulation; Analyst can review detections without either action
 13. ADDED SIGN-OUT TO ACTIVE APP HEADER: authenticated users can end their session and return to the sign-in page
+14. ADDED FLOW HISTORY FILTERS: Threats, normal traffic, blocked flows, and removed flows can be opened from their counters; Admins can unblock or restore flows back into the active list
 
 ## REAL METRICS (not invented)
 - Algorithm: Random Forest

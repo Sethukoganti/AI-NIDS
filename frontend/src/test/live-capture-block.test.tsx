@@ -47,8 +47,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
           npcap_installed: true,
         }
       }
+      if (path === '/admin/network/blocks') return { rule: { id: 'capture-rule-id' } }
       throw new Error(`Unexpected POST ${path}`)
       }),
+      del: vi.fn(async () => ({})),
     },
     streamSse: vi.fn(async (_path: string, handlers: { onEvent: (event: string, data: unknown) => void }) => {
       handlers.onEvent('flow', {
@@ -58,7 +60,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         is_attack: true,
         risk_level: 'high',
         risk_score: 0.9,
-        source_ip: null,
+        source_ip: localStorage.getItem('test-source-ip'),
       })
       handlers.onEvent('flow', {
         index: 2,
@@ -67,7 +69,16 @@ vi.mock('@/lib/api', async (importOriginal) => {
         is_attack: true,
         risk_level: 'high',
         risk_score: 0.95,
-        source_ip: null,
+        source_ip: localStorage.getItem('test-source-ip'),
+      })
+      handlers.onEvent('flow', {
+        index: 3,
+        prediction: 'Normal Traffic',
+        confidence: 0.99,
+        is_attack: false,
+        risk_level: 'low',
+        risk_score: 0.01,
+        source_ip: localStorage.getItem('test-source-ip'),
       })
     }),
   }
@@ -91,16 +102,24 @@ describe('live capture block-intrusion counter', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Start live capture' }))
     fireEvent.click((await screen.findAllByRole('button', { name: 'Block intrusion' }))[0])
 
-    await waitFor(() => {
-      const liveCounter = screen.getByText('Blocked intrusions:').parentElement
-      expect(liveCounter).not.toBeNull()
-      expect(within(liveCounter as HTMLElement).getByText('1')).toBeInTheDocument()
-    })
+    expect(await screen.findByRole('button', { name: /blocked: 1/i })).toBeInTheDocument()
     expect(await screen.findByText(/Blocked the following intrusion:/)).toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalledWith('/admin/network/blocks', expect.anything())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove connection from list' }))
+    fireEvent.click(screen.getByRole('button', { name: /blocked: 1/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Unblock intrusion' }))
+    expect(screen.queryByRole('button', { name: 'Unblock intrusion' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Block intrusion' }).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove connection from list' })[0])
     expect(await screen.findByText(/Removed the following intrusion:/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /removed: 1/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore removed connection' }))
+    expect(screen.queryByRole('button', { name: 'Restore removed connection' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Remove connection from list' }).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Block intrusion' })[0])
+    expect(await screen.findByRole('button', { name: /blocked: 1/i })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop & view results' }))
 
@@ -129,5 +148,71 @@ describe('live capture block-intrusion counter', () => {
     expect(await screen.findByText(/Port Scan/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Block intrusion' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Remove connection from list' })).not.toBeInTheDocument()
+  })
+
+  it('lets an analyst open threat and normal-flow lists without admin actions', async () => {
+    localStorage.setItem('ai-nids.token', 'test-token')
+    localStorage.setItem('test-role', 'analyst')
+
+    render(
+      <AuthProvider>
+        <LiveCapture />
+      </AuthProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Start live capture' }))
+    fireEvent.click(await screen.findByRole('button', { name: /normal: 1/i }))
+    expect(await screen.findByText('Normal Traffic')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /blocked:/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /removed:/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all flows' }))
+    fireEvent.click(screen.getByRole('button', { name: /threats: 2/i }))
+    expect((await screen.findAllByText(/Port Scan/)).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'Block intrusion' })).not.toBeInTheDocument()
+  })
+
+  it('lets an admin inspect, unblock, and restore simulation flows', async () => {
+    localStorage.setItem('ai-nids.token', 'test-token')
+
+    render(
+      <AuthProvider>
+        <Simulation />
+      </AuthProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Run simulation' }))
+    fireEvent.click(await screen.findByRole('button', { name: /threats found/i }))
+    expect((await screen.findAllByText(/Port Scan/)).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Block intrusion' })[0])
+    fireEvent.click(await screen.findByRole('button', { name: /blocked intrusions/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Unblock intrusion' }))
+    expect(screen.queryByRole('button', { name: 'Unblock intrusion' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove connection from list' })[0])
+    fireEvent.click(await screen.findByRole('button', { name: /removed connections/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore removed connection' }))
+    expect(screen.queryByRole('button', { name: 'Restore removed connection' })).not.toBeInTheDocument()
+  })
+
+  it('releases the created analysis policy when unblocking an IP-backed capture flow', async () => {
+    localStorage.setItem('ai-nids.token', 'test-token')
+    localStorage.setItem('test-source-ip', '192.0.2.10')
+
+    render(
+      <AuthProvider>
+        <LiveCapture />
+      </AuthProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Start live capture' }))
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Block intrusion' }))[0])
+    fireEvent.click(await screen.findByRole('button', { name: /blocked: 1/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Unblock intrusion' }))
+
+    await waitFor(() => {
+      expect(api.del).toHaveBeenCalledWith('/admin/network/blocks/capture-rule-id')
+    })
   })
 })
