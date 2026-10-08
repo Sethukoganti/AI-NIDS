@@ -206,3 +206,10 @@ Hard refresh: press `Ctrl + Shift + R` in your browser.
 - **Dataset**: CICIDS2017 — Canadian Institute for Cybersecurity, University of New Brunswick
 - **Model**: scikit-learn RandomForestClassifier
 - **Packet capture**: Scapy + Npcap (Nmap Project)
+
+## Roles
+
+K.Sanjana - Frontend and Backend development
+K.Sethu - Attack Simulation and Live Capture
+K.Satwika - Project Overview
+M.Lavanya - Model Training
