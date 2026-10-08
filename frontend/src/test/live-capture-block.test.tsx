@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from '@/context/AuthContext'
 import { api } from '@/lib/api'
 import { LiveCapture } from '@/pages/LiveCapture'
+import { Simulation } from '@/pages/Simulation'
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
@@ -11,7 +12,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       get: vi.fn(async (path: string) => {
       if (path === '/auth/config') return {}
-      if (path === '/auth/me') return { id: 'admin', role: 'admin', name: 'Admin' }
+      if (path === '/auth/me') {
+        const role = localStorage.getItem('test-role') ?? 'admin'
+        return { id: role, role, name: role === 'admin' ? 'Admin' : 'Analyst' }
+      }
       if (path === '/capture/status') {
         return {
           agent_running: false,
@@ -105,5 +109,25 @@ describe('live capture block-intrusion counter', () => {
       expect(summaryCounter).not.toBeNull()
       expect(within(summaryCounter as HTMLElement).getByText('1')).toBeInTheDocument()
     })
+  })
+
+  it.each([
+    { surface: 'live capture', Page: LiveCapture, startButton: 'Start live capture' },
+    { surface: 'simulation', Page: Simulation, startButton: 'Run simulation' },
+  ])('hides remove and block actions from analysts in $surface', async ({ Page, startButton }) => {
+    localStorage.setItem('ai-nids.token', 'test-token')
+    localStorage.setItem('test-role', 'analyst')
+
+    render(
+      <AuthProvider>
+        <Page />
+      </AuthProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: startButton }))
+
+    expect(await screen.findByText(/Port Scan/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Block intrusion' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove connection from list' })).not.toBeInTheDocument()
   })
 })

@@ -12,6 +12,8 @@
 8. IMPROVED AI Assistant visibility: /assistant route + AssistantPanel preserved; AssistantPage accessible
 9. IMPROVED error/loading/empty states in new pages
 10. NO FABRICATED DATA: all numbers come from backend APIs; simulation clearly labelled; model metrics are actual measured values (accuracy 99.5943%, macro F1 0.9818 on 30% test split of 65320 rows)
+11. MADE SIGN-IN THE OPENING PAGE: the root route now opens the existing sign-in page, with the configured Admin and Analyst demo-account shortcuts
+12. RESTRICTED FLOW ACTIONS BY ROLE: Admin retains remove/block actions in live capture and simulation; Analyst can review detections without either action
 
 ## REAL METRICS (not invented)
 - Algorithm: Random Forest

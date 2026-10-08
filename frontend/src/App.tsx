@@ -2,6 +2,7 @@ import { Route, Routes, Navigate, NavLink, useLocation } from 'react-router-dom'
 import { Activity, Bot, Brain, Info, Radio, Send, ShieldCheck, Sparkles, Wifi, X, Zap } from 'lucide-react'
 import { About } from '@/pages/About'
 import { LiveCapture } from '@/pages/LiveCapture'
+import { Login } from '@/pages/Login'
 import { Simulation } from '@/pages/Simulation'
 import { cn } from '@/lib/format'
 import { useEffect, useRef, useState } from 'react'
@@ -278,6 +279,8 @@ function Shell() {
 export function App() {
   return (
     <Routes>
+      <Route path="/" element={<Login />} />
+      <Route path="/login" element={<Login />} />
       <Route path="/*" element={<Shell />} />
     </Routes>
   )

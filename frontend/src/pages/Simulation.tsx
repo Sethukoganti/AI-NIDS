@@ -146,6 +146,7 @@ export function Simulation() {
   const progress = done ? 100 : Math.min((totalSeen / rows) * 100, 100)
   const activeSummary = done ?? null
   const handleRemoveFlow = (flow: ScoredFlow) => {
+    if (!isAdmin) return
     setFlows(current => current.filter(item => item.index !== flow.index))
     setRemovedCount(count => count + 1)
     if (flow.is_attack) {
@@ -156,6 +157,7 @@ export function Simulation() {
     }
   }
   const handleBlockIntrusion = async (flow: ScoredFlow) => {
+    if (!isAdmin) return
     setBlockingFlowIndex(flow.index)
     setError(null)
     setActionNotice(null)
@@ -273,8 +275,10 @@ export function Simulation() {
             { label: 'Flows processed', value: totalSeen, hint: `of ${rows} requested`, icon: <Activity className="h-4 w-4" />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20' },
             { label: 'Threats found', value: visibleSuspicious, hint: totalSeen ? `${formatPercent(visibleSuspicious / totalSeen, 1)} of flows` : '', icon: <ShieldAlert className="h-4 w-4" />, color: visibleSuspicious > 0 ? 'text-orange-400' : 'text-emerald-400', bg: visibleSuspicious > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-emerald-500/10 border-emerald-500/20' },
             { label: 'Normal traffic', value: Math.max(totalSeen - suspiciousSeen, 0), hint: 'no action needed', icon: <ShieldCheck className="h-4 w-4" />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
-            { label: 'Blocked intrusions', value: blockedThreats.size, hint: 'handled this run', icon: <Ban className="h-4 w-4" />, color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
-            { label: 'Removed connections', value: removedCount, hint: 'hidden from this list', icon: <CircleStop className="h-4 w-4" />, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border/50' },
+            ...(isAdmin ? [
+              { label: 'Blocked intrusions', value: blockedThreats.size, hint: 'handled this run', icon: <Ban className="h-4 w-4" />, color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
+              { label: 'Removed connections', value: removedCount, hint: 'hidden from this list', icon: <CircleStop className="h-4 w-4" />, color: 'text-muted-foreground', bg: 'bg-muted/30 border-border/50' },
+            ] : []),
           ].map(({ label, value, hint, icon, color, bg }) => (
             <div key={label} className={cn('rounded-xl border p-4', bg)}>
               <div className={cn('flex items-center gap-2 mb-2', color)}>{icon}<span className="text-xs font-semibold uppercase tracking-wide">{label}</span></div>
@@ -283,9 +287,11 @@ export function Simulation() {
             </div>
           ))}
         </div>
-        <p className="text-[10px] text-muted-foreground">
-          Blocking marks an intrusion handled in this run. Where a source IP is available, it is also added to the AI-NIDS analysis blocklist; this does not interrupt network traffic.
-        </p>
+        {isAdmin && (
+          <p className="text-[10px] text-muted-foreground">
+            Blocking marks an intrusion handled in this run. Where a source IP is available, it is also added to the AI-NIDS analysis blocklist; this does not interrupt network traffic.
+          </p>
+        )}
         </div>
       )}
 
@@ -296,12 +302,12 @@ export function Simulation() {
           streaming={running}
           total={totalSeen}
           suspicious={visibleSuspicious}
-          removedThreats={removedThreats.size}
-          blockedThreats={blockedThreats.size}
-          onRemoveFlow={handleRemoveFlow}
-          onBlockIntrusion={handleBlockIntrusion}
-          blockedThreatIndexes={[...blockedThreats]}
-          blockingFlowIndex={blockingFlowIndex}
+          removedThreats={isAdmin ? removedThreats.size : 0}
+          blockedThreats={isAdmin ? blockedThreats.size : 0}
+          onRemoveFlow={isAdmin ? handleRemoveFlow : undefined}
+          onBlockIntrusion={isAdmin ? handleBlockIntrusion : undefined}
+          blockedThreatIndexes={isAdmin ? [...blockedThreats] : []}
+          blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
           emptyMessage='Click "Run simulation" to replay CICIDS2017 attack flows.'
           waitingMessage="Streaming flows through the model…"
         />

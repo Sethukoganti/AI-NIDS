@@ -208,6 +208,7 @@ export function LiveCapture() {
   }
 
   const handleRemoveFlow = (flow: ScoredFlow) => {
+    if (!isAdmin) return
     setFlows(current => current.filter(item => item.index !== flow.index))
     setRemovedCount(count => count + 1)
     if (flow.is_attack) {
@@ -219,6 +220,7 @@ export function LiveCapture() {
   }
 
   const handleBlockIntrusion = async (flow: ScoredFlow) => {
+    if (!isAdmin) return
     setBlockingFlowIndex(flow.index)
     setError(null)
     setActionNotice(null)
@@ -362,16 +364,20 @@ export function LiveCapture() {
                   {formatNumber(visibleSuspicious)}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5" title="Intrusions marked blocked in this capture session; no live traffic is interrupted">
-                <Ban className="h-3.5 w-3.5 text-rose-400" />
-                <span className="text-muted-foreground">Blocked intrusions:</span>
-                <span className="font-mono font-bold text-rose-400">{blockedThreats.size}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <X className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">Removed:</span>
-                <span className="font-mono font-bold text-foreground">{removedCount}</span>
-              </div>
+              {isAdmin && (
+                <>
+                  <div className="flex items-center gap-1.5" title="Intrusions marked blocked in this capture session; no live traffic is interrupted">
+                    <Ban className="h-3.5 w-3.5 text-rose-400" />
+                    <span className="text-muted-foreground">Blocked intrusions:</span>
+                    <span className="font-mono font-bold text-rose-400">{blockedThreats.size}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <X className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Removed:</span>
+                    <span className="font-mono font-bold text-foreground">{removedCount}</span>
+                  </div>
+                </>
+              )}
               <div className="flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="font-mono font-bold text-foreground">{elapsedSec}s</span>
@@ -466,7 +472,7 @@ export function LiveCapture() {
                   { label: 'Flows scored', value: sessionSummary.total, color: 'text-primary' },
                   { label: 'Threats', value: sessionSummary.suspicious, color: sessionSummary.suspicious > 0 ? 'text-orange-400' : 'text-emerald-400' },
                   { label: 'Safe', value: sessionSummary.safe, color: 'text-emerald-400' },
-                  { label: 'Blocked intrusions', value: blockedThreats.size, color: 'text-rose-400' },
+                  ...(isAdmin ? [{ label: 'Blocked intrusions', value: blockedThreats.size, color: 'text-rose-400' }] : []),
                   { label: 'Packets', value: sessionSummary.packetsCaptured, color: 'text-foreground' },
                 ].map(({ label, value, color }) => (
                   <div key={label}>
@@ -490,12 +496,12 @@ export function LiveCapture() {
           streaming={streaming}
           total={total}
           suspicious={visibleSuspicious}
-          removedThreats={removedThreats.size}
-          blockedThreats={blockedThreats.size}
-          onRemoveFlow={handleRemoveFlow}
-          onBlockIntrusion={handleBlockIntrusion}
-          blockedThreatIndexes={[...blockedThreats]}
-          blockingFlowIndex={blockingFlowIndex}
+          removedThreats={isAdmin ? removedThreats.size : 0}
+          blockedThreats={isAdmin ? blockedThreats.size : 0}
+          onRemoveFlow={isAdmin ? handleRemoveFlow : undefined}
+          onBlockIntrusion={isAdmin ? handleBlockIntrusion : undefined}
+          blockedThreatIndexes={isAdmin ? [...blockedThreats] : []}
+          blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
           emptyMessage='Click "Start live capture" to begin monitoring.'
           waitingMessage="Monitoring… flows appear when TCP connections close or go idle (up to 12s)."
         />

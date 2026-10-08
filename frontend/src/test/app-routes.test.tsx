@@ -31,4 +31,14 @@ describe('application routes', () => {
 
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
   })
+
+  it('opens the sign-in page at the root route', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('backend unavailable')))
+
+    renderApp('/')
+
+    expect(await screen.findByRole('heading', { name: /sign in to ai-nids/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
+  })
 })
