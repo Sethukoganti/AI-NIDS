@@ -304,14 +304,21 @@ def simulate(
     from app.services.live_service import simulate_rows
 
     runtime = config_service.runtime_snapshot(db)
-    result = simulate_rows(
-        db,
-        rows=payload.rows,
-        sample=payload.sample,
-        persist=payload.persist,
-        user_id=user.id,
-        runtime=runtime,
-    )
+    try:
+        result = simulate_rows(
+            db,
+            rows=payload.rows,
+            sample=payload.sample,
+            persist=payload.persist,
+            user_id=user.id,
+            dataset_id=payload.dataset_id,
+            runtime=runtime,
+        )
+    except DatasetError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"message": exc.message, **exc.detail},
+        ) from exc
     # Notifications are raised by ``run_analysis`` itself for persisted runs, and
     # a dry-run creates no alert rows, so there is nothing left to fan out here.
     audit_service.record(
@@ -321,7 +328,11 @@ def simulate(
         request=request,
         category=audit_service.CAT_DATASET,
         new_value={"rows": result.get("rows"), "alerts": len(result.get("alerts") or [])},
-        detail={"sample": payload.sample, "persisted": payload.persist},
+        detail={
+            "sample": payload.sample,
+            "dataset_id": payload.dataset_id,
+            "persisted": payload.persist,
+        },
     )
     db.commit()
     return result

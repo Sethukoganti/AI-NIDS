@@ -78,6 +78,7 @@ class User(Base, TimestampMixin):
     disabled_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     access_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preferences: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
 
     datasets = relationship(
         "Dataset", back_populates="owner", cascade="all, delete-orphan", foreign_keys="Dataset.uploaded_by"
@@ -326,6 +327,81 @@ class Prediction(Base, TimestampMixin):
         if include_features:
             data["features"] = self.features or {}
         return data
+
+
+# --------------------------------------------------------------------------- #
+class CaptureSession(Base):
+    __tablename__ = "capture_sessions"
+    __table_args__ = (Index("ix_capture_session_owner_started", "owner_id", "started_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    interface: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    packet_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    flow_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    suspicious_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    flows = relationship("CaptureFlow", back_populates="session", cascade="all, delete-orphan", order_by="CaptureFlow.flow_index")
+
+    def to_dict(self, include_flows: bool = False) -> dict:
+        result = {
+            "id": self.id,
+            "interface": self.interface,
+            "status": self.status,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "packet_count": self.packet_count,
+            "flow_count": self.flow_count,
+            "suspicious_count": self.suspicious_count,
+        }
+        if include_flows:
+            result["flows"] = [flow.to_dict() for flow in self.flows]
+        return result
+
+
+class CaptureFlow(Base):
+    __tablename__ = "capture_flows"
+    __table_args__ = (UniqueConstraint("session_id", "flow_index", name="uq_capture_flow_index"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("capture_sessions.id", ondelete="CASCADE"), index=True)
+    flow_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    prediction: Mapped[str] = mapped_column(String(60), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    is_attack: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(12), default="low", nullable=False)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    destination_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    destination_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    protocol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    flow_duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    packet_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    session = relationship("CaptureSession", back_populates="flows")
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.flow_index,
+            "prediction": self.prediction,
+            "confidence": self.confidence,
+            "is_attack": self.is_attack,
+            "risk_level": self.risk_level,
+            "risk_score": self.risk_score,
+            "source_ip": self.source_ip,
+            "destination_ip": self.destination_ip,
+            "source_port": self.source_port,
+            "destination_port": self.destination_port,
+            "protocol": self.protocol,
+            "flow_duration": self.flow_duration,
+            "packet_rate": self.packet_rate,
+            "timestamp": self.created_at.isoformat() if self.created_at else None,
+        }
 
 
 # --------------------------------------------------------------------------- #

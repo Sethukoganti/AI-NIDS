@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity, Ban, CircleStop, Info, Play, Radio,
@@ -30,6 +30,12 @@ interface SampleOption {
   rows: number
 }
 
+interface UploadedDataset {
+  id: string
+  filename: string
+  rows: number
+}
+
 interface SimulateResult {
   processed?: number
   elapsed_ms?: number
@@ -48,6 +54,8 @@ export function Simulation() {
   const { isAdmin } = useAuth()
   const [samples, setSamples] = useState<SampleOption[]>([])
   const [sample, setSample] = useState('simulation_stream.csv')
+  const [uploadedDataset, setUploadedDataset] = useState<UploadedDataset | null>(null)
+  const [uploadingDataset, setUploadingDataset] = useState(false)
   const [rows, setRows] = useState(120)
   const [running, setRunning] = useState(false)
   const [flows, setFlows] = useState<ScoredFlow[]>([])
@@ -69,6 +77,7 @@ export function Simulation() {
   const [persisting, setPersisting] = useState(false)
   const [persistResult, setPersistResult] = useState<SimulateResult | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
+  const datasetInputRef = useRef<HTMLInputElement | null>(null)
 
   const loadSamples = useCallback(async () => {
     try {
@@ -90,6 +99,24 @@ export function Simulation() {
 
   const stop = () => { controllerRef.current?.abort(); controllerRef.current = null; setRunning(false) }
 
+  const uploadDataset = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setUploadingDataset(true)
+    setError(null)
+    try {
+      const result = await api.upload<UploadedDataset>('/datasets/upload', file)
+      setUploadedDataset(result)
+      setSample(`dataset:${result.id}`)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setUploadingDataset(false)
+    }
+  }
+
   const start = async () => {
     stop()
     setFlows([]); setDone(null); setError(null); setStartInfo(null); setPersistResult(null)
@@ -100,8 +127,12 @@ export function Simulation() {
     setRunning(true)
     const controller = new AbortController()
     controllerRef.current = controller
+    const selectedDatasetId = sample.startsWith('dataset:') ? sample.slice('dataset:'.length) : null
+    const params = new URLSearchParams({ rows: String(rows) })
+    if (selectedDatasetId) params.set('dataset_id', selectedDatasetId)
+    else params.set('sample', sample)
     await streamSse(
-      `/live/stream?rows=${rows}&sample=${encodeURIComponent(sample)}`,
+      `/live/stream?${params.toString()}`,
       {
         onEvent: (event, data) => {
           if (event === 'start') setStartInfo(data)
@@ -143,8 +174,13 @@ export function Simulation() {
   const persistResults = async () => {
     setPersisting(true); setError(null)
     try {
+      const selectedDatasetId = sample.startsWith('dataset:') ? sample.slice('dataset:'.length) : null
       setPersistResult(await api.post<SimulateResult>('/predictions/simulate', {
-        rows, sample: sample.replace(/\.csv$/, ''), persist: true,
+        rows,
+        ...(selectedDatasetId
+          ? { dataset_id: selectedDatasetId }
+          : { sample: sample.replace(/\.csv$/, '') }),
+        persist: true,
       }))
     } catch (err) { setError(errorMessage(err)) }
     finally { setPersisting(false) }
@@ -268,20 +304,43 @@ export function Simulation() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Attack Simulation</h1>
               <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-                Replays real CICIDS2017 attack flows through the production pipeline. Use this to demo what threats look like — identical to live capture output.
+                Replay a bundled sample or upload your own compatible network-flow dataset to score it through the production detection pipeline.
               </p>
               {/* Info badge */}
               <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/5 px-2.5 py-1 text-[11px] text-blue-300">
                 <Info className="h-3 w-3" />
-                Held-out test data — never used for training
+                {sample.startsWith('dataset:')
+                  ? 'Uploaded network-flow data — analyzed only, never used for training'
+                  : 'Held-out test data — never used for training'}
               </div>
             </div>
           </div>
 
           {/* Controls */}
           <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={datasetInputRef}
+              type="file"
+              accept=".csv,.parquet"
+              className="sr-only"
+              onChange={uploadDataset}
+              aria-label="Upload a network-flow dataset"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => datasetInputRef.current?.click()}
+              disabled={running || uploadingDataset}
+            >
+              {uploadingDataset ? 'Uploading…' : 'Add dataset'}
+            </Button>
             <Select value={sample} onChange={e => setSample(e.target.value)}
               className="w-[210px] text-xs" disabled={running}>
+              {uploadedDataset && (
+                <option value={`dataset:${uploadedDataset.id}`}>
+                  Your dataset: {uploadedDataset.filename} ({uploadedDataset.rows} flows)
+                </option>
+              )}
               {samples.map(s => (
                 <option key={s.name} value={s.name}>
                   {s.label} {s.rows > 0 ? `(${s.rows} flows)` : ''}
@@ -385,7 +444,7 @@ export function Simulation() {
           onRestoreFlow={isAdmin && flowView === 'removed' ? handleRestoreFlow : undefined}
           blockedThreatIndexes={isAdmin && flowView === 'blocked' ? blockedFlows.map(flow => flow.index) : []}
           blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
-          emptyMessage='Click "Run simulation" to replay CICIDS2017 attack flows.'
+          emptyMessage='Click "Run simulation" to analyze the selected network-flow dataset.'
           waitingMessage="Streaming flows through the model…"
         />
         </>
@@ -402,8 +461,8 @@ export function Simulation() {
             <div>
               <p className="text-lg font-semibold text-muted-foreground">Ready to simulate</p>
               <p className="mt-1 text-sm text-muted-foreground/60 max-w-md mx-auto">
-                Replays real attacks from the CICIDS2017 dataset through the model.
-                Great for demos — shows exactly what each threat looks like.
+                Analyze a bundled CICIDS2017 sample or add your own compatible network-flow dataset.
+                Each flow is scored by the detection model.
               </p>
             </div>
             {/* Attack types grid */}

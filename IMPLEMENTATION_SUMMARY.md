@@ -20,6 +20,9 @@
 16. ADDED MODEL MONITORING: dashboard aggregates recent prediction volume, confidence, low-confidence share, labeled accuracy (when ground truth exists), and class trends
 17. ADDED SAVED DASHBOARD VIEWS: users can save and restore named time-window presets in their browser
 18. ADDED PDF-ONLY REPORT EXPORT: Detection Results can be printed or saved as PDF for the active filters and page; no email delivery or PDF package is used
+19. PERSISTED LIVE CAPTURE HISTORY: authenticated sessions and scored flows are stored in the database and can be reopened by their owner; other users receive no session details
+20. ADDED PER-USER IN-APP NOTIFICATION PREFERENCES: each user can choose notification categories and a minimum severity; preferences are persisted in the user record and filter the feed
+21. ADDED CUSTOM ATTACK-SIMULATION DATASETS: Admins and Analysts can upload compatible CSV/parquet flow files, replay and score them, and save the resulting analysis; uploaded datasets are owner-checked
 
 ## REAL METRICS (not invented)
 - Algorithm: Random Forest
@@ -68,12 +71,15 @@
 ## FULL API MAP (backend exists, frontend now connects)
 - /api/auth/* — JWT auth, /me, /login, /logout
 - /api/dashboard/stats — real aggregates
+- /api/dashboard/model-monitoring — recent confidence, labeled accuracy and class trend aggregates
+- /api/capture/history — authenticated user's persisted capture sessions and flow results
+- /api/analyst/notification-preferences — per-user in-app notification categories and severity threshold
 - /api/predictions/* — analyze, jobs, explain, predictions
 - /api/alerts/* — view, acknowledge, update
 - /api/investigations/* — create, notes, resolve
 - /api/model/* — info, evaluation, explanation, class profiles
 - /api/datasets/* — upload, download, profile, preview
-- /api/live/* — simulation (labelled)
+- /api/live/* — authenticated simulation over bundled samples or owner-uploaded datasets (labelled)
 - /api/assistant/ask — grounded AI (permission-filtered, no admin-only info to analyst)
 - /api/admin/* — all admin capabilities now exposed through frontend pages
 
@@ -82,6 +88,7 @@
 - Auth tests exist (test_auth.py)
 - All new pages use existing api.ts request helper with proper error handling
 - All pages check user?.role === 'admin'; otherwise show access denied
+- Focused tests cover capture-history ownership and persistence, notification-preference validation and feed filtering, model monitoring response shape, and active routes/PDF export
 
 ## DOCUMENTATION UPDATED
 - README preserved (real accuracy statement included)

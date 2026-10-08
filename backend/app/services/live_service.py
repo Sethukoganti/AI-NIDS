@@ -2,11 +2,10 @@
 Live Traffic Simulation service.
 
 IMPORTANT (honesty): this does **not** capture packets from a network interface.
-It replays real held-out CICIDS2017 flow records one at a time through the same
-production pipeline (preprocess -> Random Forest -> risk engine) so the
-dashboard, alerts and streaming UI behave exactly as they would with a live
-feed. ``docs/ARCHITECTURE.md`` describes the optional packet-capture front-end
-that would replace the replay source.
+It replays held-out CICIDS2017 records or a user's uploaded network-flow dataset
+one at a time through the production pipeline (preprocess -> Random Forest ->
+risk engine). ``docs/ARCHITECTURE.md`` describes the optional packet-capture
+front-end that would replace the replay source.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.models.database_models import Dataset
 from app.services import dataset_service, risk_service
 from app.services.ml_service import model_service
 from app.services.preprocessing_service import DatasetError, load_schema, prepare_features, read_traffic_file
@@ -48,20 +48,36 @@ def available_samples() -> list[dict]:
     return samples
 
 
-def _load(sample: str, rows: int) -> pd.DataFrame:
-    # accept both "simulation_stream" and "simulation_stream.csv"
-    if not sample.endswith(".csv"):
-        sample = f"{sample}.csv"
-    path = dataset_service.sample_file(sample)
-    if path is None:
-        raise DatasetError(
-            "The simulation sample file is missing. Run `python ml/train_model.py` to generate "
-            "frontend/public/samples.",
-            404,
-        )
-    df = read_traffic_file(path, max_rows=rows)
+def user_dataset_path(db: Session, dataset_id: str, user_id: str) -> tuple[Dataset, Path]:
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or dataset.uploaded_by != user_id or not dataset.stored_path:
+        raise DatasetError("Dataset not found.", 404)
+
+    path = Path(dataset.stored_path).resolve()
+    try:
+        path.relative_to(settings.upload_dir.resolve())
+    except ValueError as exc:
+        raise DatasetError("Stored dataset is unavailable.", 404) from exc
+    if not path.is_file():
+        raise DatasetError("Stored dataset is unavailable.", 404)
+    return dataset, path
+
+
+def _load(sample: str, rows: int, source_path: Path | None = None) -> pd.DataFrame:
+    if source_path is None:
+        # accept both "simulation_stream" and "simulation_stream.csv"
+        if not sample.endswith(".csv"):
+            sample = f"{sample}.csv"
+        source_path = dataset_service.sample_file(sample)
+        if source_path is None:
+            raise DatasetError(
+                "The simulation sample file is missing. Run `python ml/train_model.py` to generate "
+                "frontend/public/samples.",
+                404,
+            )
+    df = read_traffic_file(source_path, max_rows=rows)
     if df.empty:
-        raise DatasetError("The simulation sample contains no records.")
+        raise DatasetError("The selected simulation dataset contains no records.")
     return df
 
 
@@ -71,15 +87,22 @@ def simulate_rows(
     sample: str = DEFAULT_SAMPLE,
     persist: bool = False,
     user_id: str | None = None,
+    dataset_id: str | None = None,
     runtime=None,
 ) -> dict:
     """Run N flows through the full pipeline and return the per-flow results."""
     from app.services import alert_service, config_service
 
     runtime = runtime or config_service.runtime_snapshot(db)
+    uploaded_dataset = None
+    uploaded_path = None
+    if dataset_id is not None:
+        if user_id is None:
+            raise DatasetError("Dataset not found.", 404)
+        uploaded_dataset, uploaded_path = user_dataset_path(db, dataset_id, user_id)
 
     if persist:
-        dataset = dataset_service.register_builtin_sample(
+        dataset = uploaded_dataset or dataset_service.register_builtin_sample(
             db, "simulation_stream" if "simulation" in sample else "sample_traffic", user_id
         )
         from app.models.database_models import AnalysisJob
@@ -94,6 +117,7 @@ def simulate_rows(
         alerts = alert_service.list_alerts(db, job_id=job.id, page=1, page_size=200)
         return {
             "persisted": True,
+            "processed": summary["total_records"],
             "job": job.to_dict(),
             "summary": summary,
             "records": records["items"],
@@ -101,7 +125,7 @@ def simulate_rows(
             "effective_configuration": runtime.to_dict(),
         }
 
-    frame = _load(sample, rows)
+    frame = _load(sample, rows, source_path=uploaded_path)
     schema = load_schema()
     prepared = prepare_features(frame, schema, strict=True)
     thresholds = runtime.risk_thresholds()
@@ -143,7 +167,7 @@ def simulate_rows(
     suspicious = [r for r in results if r["is_attack"]]
     return {
         "persisted": False,
-        "sample": sample,
+        "sample": uploaded_dataset.filename if uploaded_dataset else sample,
         "processed": len(results),
         "elapsed_ms": int((time.perf_counter() - started) * 1000),
         "summary": {
@@ -159,7 +183,13 @@ def simulate_rows(
     }
 
 
-def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE, runtime=None):
+def stream_frames(
+    rows: int = 200,
+    sample: str = DEFAULT_SAMPLE,
+    runtime=None,
+    source_path: Path | None = None,
+    source_name: str | None = None,
+):
     """
     Generator used by the SSE endpoint: yields one event dict per flow so the
     dashboard can update live without reloading anything.
@@ -167,7 +197,7 @@ def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE, runtime=None):
     from app.services import config_service
 
     runtime = runtime or config_service.get_runtime()
-    frame = _load(sample, rows)
+    frame = _load(sample, rows, source_path=source_path)
     schema = load_schema()
     prepared = prepare_features(frame, schema, strict=True)
     total = len(prepared.features)
@@ -177,13 +207,21 @@ def stream_frames(rows: int = 200, sample: str = DEFAULT_SAMPLE, runtime=None):
         "event": "start",
         "data": {
             "total": total,
-            "sample": sample,
+            "sample": source_name or sample,
             "algorithm": model_service.metadata.get("algorithm"),
             "n_estimators": model_service.metadata.get("n_estimators"),
             "classes": model_service.classes_ if model_service.is_loaded else [],
-            "label": "Live Traffic Simulation (replaying held-out CICIDS2017 flows)",
-            "note": "Records are replayed from the held-out dataset sample - this is not a "
-                    "packet-capture feed.",
+            "label": (
+                f"Live Traffic Simulation ({source_name})"
+                if source_name
+                else "Live Traffic Simulation (replaying held-out CICIDS2017 flows)"
+            ),
+            "note": (
+                "Uploaded network-flow records are being analyzed; this is not a packet-capture feed."
+                if source_name
+                else "Records are replayed from the held-out dataset sample - this is not a "
+                     "packet-capture feed."
+            ),
             "detection_sensitivity": runtime.detection_sensitivity,
             "status": runtime.status,
         },

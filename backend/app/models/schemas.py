@@ -163,10 +163,11 @@ class JobOut(BaseModel):
 
 
 class SimulateRequest(BaseModel):
-    """Process N sample flows sequentially (stateless demo of the pipeline)."""
+    """Process flows sequentially (stateless demo of the pipeline)."""
 
     rows: int = Field(default=50, ge=1, le=2000)
     sample: Literal["sample_traffic", "simulation_stream"] = "simulation_stream"
+    dataset_id: str | None = None
     persist: bool = False
 
 

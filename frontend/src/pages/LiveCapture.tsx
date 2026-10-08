@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Activity, Ban, CircleStop, Clock, Network,
+  Activity, Ban, CircleStop, Clock, History, Network,
   ShieldAlert, ShieldCheck, Wifi, Zap, FlaskConical, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -45,6 +45,21 @@ interface SessionSummary {
   durationSec: number
 }
 
+interface CaptureHistorySession {
+  id: string
+  interface: string | null
+  status: string
+  started_at: string
+  ended_at: string | null
+  packet_count: number
+  flow_count: number
+  suspicious_count: number
+}
+
+interface CaptureHistoryDetail extends CaptureHistorySession {
+  flows: (ScoredFlow & { timestamp?: string | null })[]
+}
+
 type FlowView = 'threats' | 'normal' | 'blocked' | 'removed'
 
 // ── Animated counter ───────────────────────────────────────────────────── //
@@ -75,12 +90,27 @@ export function LiveCapture() {
   const [unblockingFlowIndex, setUnblockingFlowIndex] = useState<number | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
+  const [captureHistory, setCaptureHistory] = useState<CaptureHistorySession[]>([])
+  const [selectedHistoryId, setSelectedHistoryId] = useState('')
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [viewingHistory, setViewingHistory] = useState(false)
   const [sessionStartTime, setSessionStartTime] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
   const [injecting, setInjecting] = useState(false)
   const [injectMsg, setInjectMsg] = useState<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const timerRef = useRef<number | null>(null)
+
+  const loadCaptureHistory = useCallback(async () => {
+    try {
+      const result = await api.get<{ items: CaptureHistorySession[] }>('/capture/history?page=1&page_size=25')
+      if (!Array.isArray(result?.items)) throw new Error('Backend returned an invalid capture history response.')
+      setCaptureHistory(result.items)
+      setSelectedHistoryId((current) => current || result.items[0]?.id || '')
+    } catch (err) {
+      setError(`Could not load capture history: ${errorMessage(err)}`)
+    }
+  }, [])
 
   const loadStatus = useCallback(async () => {
     try { setStatus(await api.get<CaptureStatus>('/capture/status')) } catch { /* ignore */ }
@@ -97,9 +127,10 @@ export function LiveCapture() {
 
   useEffect(() => {
     loadStatus(); loadIfaces()
+    loadCaptureHistory()
     const t = setInterval(loadStatus, 3000)
     return () => { clearInterval(t); controllerRef.current?.abort() }
-  }, [loadStatus, loadIfaces])
+  }, [loadStatus, loadIfaces, loadCaptureHistory])
 
   // Elapsed timer while streaming
   useEffect(() => {
@@ -115,6 +146,7 @@ export function LiveCapture() {
 
   const handleStart = async () => {
     setError(null); setStarting(true)
+    setViewingHistory(false)
     setFlows([]); setTotal(0); setSuspicious(0); setSessionSummary(null); setElapsedSec(0)
     setRemovedFlows([]); setBlockedFlows([]); setBlockedRuleIds({}); setFlowView(null)
     setRemovedThreats(new Set())
@@ -132,6 +164,7 @@ export function LiveCapture() {
         return
       }
       const startTs = Date.now()
+      void loadCaptureHistory()
       setSessionStartTime(startTs)
       setStreaming(true)
       const controller = new AbortController()
@@ -211,8 +244,43 @@ export function LiveCapture() {
         interface: result.interface,
         durationSec: elapsedSec,
       })
+      setViewingHistory(false)
+      void loadCaptureHistory()
     } catch (err) { setError(errorMessage(err)) }
     finally { setStopping(false) }
+  }
+
+  const viewCaptureHistory = async () => {
+    if (!selectedHistoryId) return
+    setHistoryLoading(true)
+    setError(null)
+    try {
+      const session = await api.get<CaptureHistoryDetail>(`/capture/history/${selectedHistoryId}`)
+      if (!Array.isArray(session?.flows)) throw new Error('Backend returned an invalid capture session response.')
+      setFlows(session.flows)
+      setTotal(session.flow_count)
+      setSuspicious(session.suspicious_count)
+      setRemovedFlows([])
+      setBlockedFlows([])
+      setRemovedThreats(new Set())
+      setBlockedThreats(new Set())
+      setRemovedCount(0)
+      setFlowView(null)
+      setSessionSummary({
+        total: session.flow_count,
+        suspicious: session.suspicious_count,
+        safe: session.flow_count - session.suspicious_count,
+        packetsCaptured: session.packet_count,
+        flowsCompleted: session.flow_count,
+        interface: session.interface,
+        durationSec: 0,
+      })
+      setViewingHistory(true)
+    } catch (err) {
+      setError(`Could not load capture session: ${errorMessage(err)}`)
+    } finally {
+      setHistoryLoading(false)
+    }
   }
 
   const handleRemoveFlow = (flow: ScoredFlow) => {
@@ -369,6 +437,48 @@ export function LiveCapture() {
           </div>
         </div>
       </div>
+
+      {captureHistory.length > 0 && !streaming && (
+        <Card className="border-border/70 bg-panel/40">
+          <CardContent className="flex flex-wrap items-center gap-3 p-3">
+            <div className="flex items-center gap-2 text-xs font-medium">
+              <History className="h-4 w-4 text-primary" />
+              Capture history
+            </div>
+            <Select
+              aria-label="Saved capture sessions"
+              value={selectedHistoryId}
+              onChange={(event) => setSelectedHistoryId(event.target.value)}
+              className="min-w-[240px] flex-1 text-xs"
+              disabled={agentRunning}
+            >
+              {captureHistory.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {new Date(session.started_at).toLocaleString()} · {session.interface ?? 'Unknown interface'} · {session.flow_count} flows ({session.status})
+                </option>
+              ))}
+            </Select>
+            <Button size="sm" variant="outline" onClick={viewCaptureHistory} disabled={historyLoading || agentRunning}>
+              {historyLoading ? 'Loading…' : 'View saved session'}
+            </Button>
+            {viewingHistory && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setViewingHistory(false)
+                  setFlows([])
+                  setTotal(0)
+                  setSuspicious(0)
+                  setSessionSummary(null)
+                }}
+              >
+                Return to live view
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Npcap missing */}
       {npcapMissing && (
@@ -582,11 +692,11 @@ export function LiveCapture() {
           suspicious={visibleSuspicious}
           removedThreats={isAdmin ? removedFlows.length : 0}
           blockedThreats={isAdmin ? blockedFlows.length : 0}
-          onRemoveFlow={isAdmin ? handleRemoveFlow : undefined}
-          onBlockIntrusion={isAdmin ? handleBlockIntrusion : undefined}
-          onUnblockIntrusion={isAdmin && flowView === 'blocked' ? handleUnblockIntrusion : undefined}
+          onRemoveFlow={isAdmin && !viewingHistory ? handleRemoveFlow : undefined}
+          onBlockIntrusion={isAdmin && !viewingHistory ? handleBlockIntrusion : undefined}
+          onUnblockIntrusion={isAdmin && !viewingHistory && flowView === 'blocked' ? handleUnblockIntrusion : undefined}
           unblockingFlowIndex={isAdmin ? unblockingFlowIndex : null}
-          onRestoreFlow={isAdmin && flowView === 'removed' ? handleRestoreFlow : undefined}
+          onRestoreFlow={isAdmin && !viewingHistory && flowView === 'removed' ? handleRestoreFlow : undefined}
           blockedThreatIndexes={isAdmin && flowView === 'blocked' ? blockedFlows.map(flow => flow.index) : []}
           blockingFlowIndex={isAdmin ? blockingFlowIndex : null}
           emptyMessage='Click "Start live capture" to begin monitoring.'

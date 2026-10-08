@@ -45,7 +45,7 @@ def create(
     title: str,
     message: str | None = None,
     severity: str = "info",
-    category: str = "general",
+    category: str = "system",
     resource: str | None = None,
     resource_id: str | None = None,
     target_role: str | None = None,
