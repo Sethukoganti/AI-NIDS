@@ -14,6 +14,7 @@
 10. NO FABRICATED DATA: all numbers come from backend APIs; simulation clearly labelled; model metrics are actual measured values (accuracy 99.5943%, macro F1 0.9818 on 30% test split of 65320 rows)
 11. MADE SIGN-IN THE OPENING PAGE: the root route now opens the existing sign-in page, with the configured Admin and Analyst demo-account shortcuts
 12. RESTRICTED FLOW ACTIONS BY ROLE: Admin retains remove/block actions in live capture and simulation; Analyst can review detections without either action
+13. ADDED SIGN-OUT TO ACTIVE APP HEADER: authenticated users can end their session and return to the sign-in page
 
 ## REAL METRICS (not invented)
 - Algorithm: Random Forest

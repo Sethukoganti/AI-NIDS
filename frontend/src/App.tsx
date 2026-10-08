@@ -1,9 +1,10 @@
-import { Route, Routes, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Activity, Bot, Brain, Info, Radio, Send, ShieldCheck, Sparkles, Wifi, X, Zap } from 'lucide-react'
+import { Route, Routes, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Activity, Bot, Brain, Info, LogOut, Radio, Send, ShieldCheck, Sparkles, Wifi, X, Zap } from 'lucide-react'
 import { About } from '@/pages/About'
 import { LiveCapture } from '@/pages/LiveCapture'
 import { Login } from '@/pages/Login'
 import { Simulation } from '@/pages/Simulation'
+import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/format'
 import { useEffect, useRef, useState } from 'react'
 import { api, errorMessage } from '@/lib/api'
@@ -162,6 +163,13 @@ function LiveClock() {
 // ── Shell ────────────────────────────────────────────────────────────────── //
 function Shell() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, logout } = useAuth()
+
+  const signOut = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -253,6 +261,17 @@ function Shell() {
               </span>
               <span className="font-semibold text-emerald-400">MONITORING</span>
             </div>
+            {user && (
+              <button
+                type="button"
+                onClick={() => void signOut()}
+                className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background/40 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-foreground"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign out</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
